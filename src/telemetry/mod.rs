@@ -1,170 +1,134 @@
+mod gps_time;
+mod hs_deployed;
+mod mast_raised;
+mod mission_time;
+mod mode;
+mod pc_deployed;
+mod state;
+
+pub use gps_time::GpsTime;
+pub use hs_deployed::HsDeployed;
+pub use mast_raised::MastRaised;
+pub use mission_time::MissionTime;
+pub use mode::Mode;
+pub use pc_deployed::PcDeployed;
+pub use state::State;
+
 use parse_display::{Display, FromStr};
 
-mod mode;
-mod packet_type;
-mod software_state;
-mod timestamp;
-mod tp_released;
-mod tp_software_state;
-
-pub use mode::Mode;
-pub use packet_type::PacketType;
-pub use software_state::SoftwareState;
-pub use timestamp::Timestamp;
-pub use tp_released::TpReleased;
-pub use tp_software_state::TpSoftwareState;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Telemetry {
-    Container(ContainerTelemetry),
-    Payload(PayloadTelemetry),
-}
-
 #[derive(Display, FromStr, Clone, Debug, PartialEq)]
 #[display(
-"{team_id},{timestamp},{packet_no},{packet_type},{mode},{tp_released},\
-    {altitude:.1},{temp:.1},{voltage:.2},{gps_time},{gps_latitude:.4},{gps_longitude:.4},\
-    {gps_altitude:.4},{gps_sats},{software_state},{cmd_echo}"
+    "{team_id},{mission_time},{packet_count},{mode},{state},{altitude:.1},{hs_deployed},{pc_deployed},\
+    {mast_raised},{temperature:.1},{voltage:.1},{gps_time},{gps_altitude:.1},\
+    {gps_latitude:.4},{gps_longitude:.4},{gps_sats},{tilt_x:.2},{tilt_y:.2},{cmd_echo}"
 )]
-pub struct ContainerTelemetry {
+#[non_exhaustive]
+pub struct Telemetry {
+    /// TEAM_ID: four digit team identification number
     pub team_id: u16,
-    pub timestamp: Timestamp,
-    pub packet_no: u32,
-    pub packet_type: PacketType,
+
+    /// MISSION_TIME: UTC time - hh:mm:ss.ss
+    pub mission_time: MissionTime,
+
+    /// PACKET_COUNT: count of transmitted packets, must be maintained through processor resets - EEPROM.
+    pub packet_count: u32,
+
+    /// MODE: F for flight, S for simulation
     pub mode: Mode,
-    pub tp_released: TpReleased,
-    pub altitude: f32,
-    pub temp: f32,
-    pub voltage: f32,
-    pub gps_time: Timestamp,
-    pub gps_latitude: f32,
-    pub gps_longitude: f32,
-    pub gps_altitude: f32,
-    pub gps_sats: u8,
-    pub software_state: SoftwareState,
-    pub cmd_echo: String,
-}
 
-#[derive(Display, FromStr, Clone, Debug, PartialEq)]
-#[display(
-"{team_id},{timestamp},{packet_no},{packet_type},{tp_altitude:.1},{tp_temp:.1},\
-    {tp_voltage:.2},{gyro_r:.2},{gyro_p:.2},{gyro_y:.2},{accel_r:.2},{accel_p:.2},{accel_y:.2},\
-    {mag_r:.2},{mag_p:.2},{mag_y:.2},{pointing_error:.1},{tp_software_state}"
-)]
-pub struct PayloadTelemetry {
-    pub team_id: u16,
-    pub timestamp: Timestamp,
-    pub packet_no: u32,
-    pub packet_type: PacketType,
-    pub tp_altitude: f32,
-    pub tp_temp: f32,
-    pub tp_voltage: f32,
-    pub gyro_r: f32,
-    pub gyro_p: f32,
-    pub gyro_y: f32,
-    pub accel_r: f32,
-    pub accel_p: f32,
-    pub accel_y: f32,
-    pub mag_r: f32,
-    pub mag_p: f32,
-    pub mag_y: f32,
-    pub pointing_error: f32,
-    pub tp_software_state: TpSoftwareState,
+    /// STATE: the operating state of the software
+    pub state: State,
+
+    /// ALTITUDE: height in metres relative to the launch site, resolution of 0.1m.
+    pub altitude: f32,
+
+    /// HS_DEPLOYED: P = probe with heat shield is deployed, N otherwise
+    pub hs_deployed: HsDeployed,
+
+    /// PC_DEPLOYED: C = probe parachute deployed (200m), N otherwise
+    pub pc_deployed: PcDeployed,
+
+    /// MAST_RAISED: M = flag mast raised after landing N otherwise
+    pub mast_raised: MastRaised,
+
+    /// TEMPERATURE: the temperature in celsiubs with a resolution of 0.1 C
+    pub temperature: f32,
+
+    /// VOLTAGE: the voltage of the cansat power bus, with a resolution of 0.1 V
+    pub voltage: f32,
+
+    /// GPS_TIME: time from the GPS receiver, must be reported in UTC and have a resolution of a second
+    pub gps_time: GpsTime,
+
+    /// GPS_ALTITUDE: altitude from the GPS receiver, in metres above mean sea level, resolution 0.1m
+    pub gps_altitude: f32,
+
+    /// GPS_LATITUDE: latitude from the GPS receiver, in decimal degrees with a resolution of 0.0001 degrees North
+    pub gps_latitude: f32,
+
+    /// GPS_LONGITUDE: longitude from the GPS receiver, in decimal degrees with a resolution of 0.0001 degrees West
+    pub gps_longitude: f32,
+
+    /// GPS_SATS: the number of GPS satellites being tracked by the GPS receiver, must be an integer lol
+    pub gps_sats: u8,
+
+    /// TILT_X: angle of the CanSat X axes in degrees, with a resolution of 0.01 degrees.
+    /// 0 degrees is defined as when the axes are perpendicular to the Z axes,
+    /// which is defined as towards the centre of gravity of the earth.
+    pub tilt_x: f32,
+
+    /// TILT_Y: angle of the CanSat Y axes in degrees, with a resolution of 0.01 degrees.
+    /// 0 degrees is defined as when the axes are perpendicular to the Z axes,
+    /// which is defined as towards the centre of gravity of the earth.
+    pub tilt_y: f32,
+
+    /// CMD_ECHO: the last command received by the CanSat, e.g. CXON or SP101325.
+    pub cmd_echo: String,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
-    use std::io;
 
     #[test]
-    fn test_container_telemetry_parse() {
-        let s = "1057,00:00:00.00,0,C,F,R,250.0,20.0,5.0,00:00:00.00,0,0.0,0.0,3,DP1,CXON";
-        let telem = s.parse::<ContainerTelemetry>();
+    fn test_telemetry_parse() {
+        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
+        let telem = s.parse::<Telemetry>();
         assert_eq!(
             telem,
-            Ok(ContainerTelemetry {
-                team_id: 1057,
-                timestamp: Timestamp {
-                    h: 0,
-                    m: 0,
-                    s: 0,
-                    cs: 0
+            Ok(Telemetry {
+                team_id: 1047,
+                mission_time: MissionTime {
+                    h: 15,
+                    m: 12,
+                    s: 2,
+                    cs: 99
                 },
-                packet_no: 0,
-                packet_type: PacketType::Container,
+                packet_count: 123,
                 mode: Mode::Flight,
-                tp_released: TpReleased::Released,
-                altitude: 250.0,
-                temp: 20.0,
-                voltage: 5.0,
-                gps_time: Timestamp {
-                    h: 0,
-                    m: 0,
-                    s: 0,
-                    cs: 0
-                },
-                gps_latitude: 0.0,
-                gps_longitude: 0.0,
-                gps_altitude: 0.0,
-                gps_sats: 3,
-                software_state: SoftwareState::DescentPar1,
-                cmd_echo: "CXON".to_string()
+                state: State::Yeeted,
+                altitude: 356.2,
+                hs_deployed: HsDeployed::Deployed,
+                pc_deployed: PcDeployed::Deployed,
+                mast_raised: MastRaised::NotRaised,
+                temperature: 37.8,
+                voltage: 5.1,
+                gps_time: GpsTime { h: 15, m: 12, s: 3 },
+                gps_altitude: 1623.3,
+                gps_latitude: 37.2249,
+                gps_longitude: -80.4249,
+                gps_sats: 14,
+                tilt_x: 2.36,
+                tilt_y: -5.49,
+                cmd_echo: "CXON".to_string(),
             })
         );
     }
 
     #[test]
-    fn test_container_telemetry_parse_fmt_identical() {
-        let s = "1057,00:00:00.00,0,C,F,R,250.0,20.0,5.01,00:00:00.00,\
-                       0.0000,0.0000,0.0000,3,DP1,CXON";
-        let telem = s.parse::<ContainerTelemetry>().unwrap();
-        assert_eq!(format!("{}", telem), s.to_string());
-    }
-
-    #[test]
-    fn test_payload_telemetry_parse() {
-        let s = "1057,00:00:00.20,1,T,254.3,19.8,4.92,0.93,-0.46,0.89,-0.89,\
-                       0.29,9.04,0.98,0.7,0.69,1.2,RELEASED";
-
-        let telem = s.parse::<PayloadTelemetry>();
-        assert_eq!(
-            telem,
-            Ok(PayloadTelemetry {
-                team_id: 1057,
-                timestamp: Timestamp {
-                    h: 0,
-                    m: 0,
-                    s: 0,
-                    cs: 20
-                },
-                packet_no: 1,
-                packet_type: PacketType::TetheredPayload,
-                tp_altitude: 254.3,
-                tp_temp: 19.8,
-                tp_voltage: 4.92,
-                gyro_r: 0.93,
-                gyro_p: -0.46,
-                gyro_y: 0.89,
-                accel_r: -0.89,
-                accel_p: 0.29,
-                accel_y: 9.04,
-                mag_r: 0.98,
-                mag_p: 0.7,
-                mag_y: 0.69,
-                pointing_error: 1.2,
-                tp_software_state: TpSoftwareState::Released
-            })
-        )
-    }
-
-    #[test]
-    fn test_payload_telemetry_parse_fmt_identical() {
-        let s = "1057,00:00:00.20,1,T,254.3,19.8,4.92,0.93,-0.46,0.89,-0.89,\
-                       0.29,9.04,0.98,0.70,0.69,1.2,RELEASED";
-
-        let telem = s.parse::<PayloadTelemetry>().unwrap();
+    fn test_telemetry_parse_fmt_identical() {
+        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
+        let telem = s.parse::<Telemetry>().unwrap();
         assert_eq!(format!("{}", telem), s.to_string());
     }
 }

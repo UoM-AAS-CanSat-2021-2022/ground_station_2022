@@ -26,8 +26,9 @@ fn main() -> Result<()> {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            // let ppp = cc.egui_ctx.pixels_per_point();
-            // cc.egui_ctx.set_pixels_per_point(ppp * 0.9);
+            let ppp = cc.egui_ctx.pixels_per_point();
+            log::info!("ppp = {ppp}");
+            cc.egui_ctx.set_pixels_per_point(ppp * 0.9);
             Box::new(my_app)
         }),
     );

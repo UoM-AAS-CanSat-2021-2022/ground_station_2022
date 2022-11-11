@@ -10,7 +10,19 @@ anyhow = "1.0.58"
 derive_builder = "0.11.2"
 eframe = "0.18.0"
 egui = "0.18.1"
-enum-iterator = "1.1.3"
+egui_extras = { version = "0.19.0", features = ["image"] }
+enum-iterator = "1.2.0"
 env_logger = "0.9.0"
+image = { version = "0.24.4", features = ["png"] }
 log = "0.4.17"
 parse-display = "0.5.5"
+tracing = "0.1.37"
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. egui), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
