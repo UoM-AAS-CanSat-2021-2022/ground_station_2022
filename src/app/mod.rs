@@ -3,12 +3,13 @@ use graphable::Graphable;
 
 use std::sync::mpsc::Receiver;
 
-use crate::telemetry::Telemetry;
 use derive_builder::Builder;
 use eframe::egui;
-use egui::plot::{Line, Plot, Value, Values};
+use egui::plot::{Line, Plot, PlotPoint, PlotPoints};
 use egui::WidgetText;
 use enum_iterator::all;
+
+use crate::telemetry::Telemetry;
 
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
@@ -19,6 +20,7 @@ pub struct GroundStationGui {
 
     telemetry: Vec<Telemetry>,
 
+    // TODO: switch this for showing the last X seconds of telemetry
     #[builder(default = "40")]
     main_graph_len: usize,
 
@@ -33,11 +35,11 @@ impl GroundStationGui {
             loop {
                 match rx.try_recv() {
                     Ok(telem) => {
-                        log::trace!("{:?}", telem);
+                        tracing::debug!("{:?}", telem);
                         self.telemetry.push(telem);
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        log::warn!("Telemetry Receiver disconnected.");
+                        tracing::warn!("Telemetry Receiver disconnected.");
                         // remove the reader so that it doesn't try to read from the disconnected channel
                         self.rx = None;
                         break;
@@ -92,13 +94,17 @@ impl eframe::App for GroundStationGui {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(format!("{}", self.main_graph_shows));
             let to_skip = self.telemetry.len().saturating_sub(self.main_graph_len);
-            let points =
-                Values::from_values_iter(self.telemetry.iter().skip(to_skip).map(|telem| {
-                    Value::new(
-                        telem.mission_time.as_seconds(),
-                        self.main_graph_shows.extract_telemetry_value(telem),
-                    )
-                }));
+            let points: Vec<[f64; 2]> = self
+                .telemetry
+                .iter()
+                .skip(to_skip)
+                .map(|telem| {
+                    [
+                        telem.mission_time.as_seconds() as f64,
+                        self.main_graph_shows.extract_telemetry_value(telem) as f64,
+                    ]
+                })
+                .collect();
             let line = Line::new(points);
             Plot::new("main_plot").show(ui, |plot_ui| plot_ui.line(line));
         });

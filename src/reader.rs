@@ -29,21 +29,23 @@ impl TelemetryReader {
         for line in lines.iter().cycle() {
             let line = match line {
                 Err(e) => {
-                    log::warn!("Encountered error while reading line: {e:?}");
+                    tracing::warn!("Encountered error while reading line: {e:?}");
                     continue;
                 }
                 Ok(line) => line,
             };
-            log::trace!("line = {:?}", line);
+            tracing::debug!("line = {:?}", line);
 
             match line.parse() {
                 Ok(telem) => {
                     if let Err(e) = self.tx.send(telem) {
-                        log::warn!("Encountered error sending telemtry over the channel: {e:?}");
+                        tracing::warn!(
+                            "Encountered error sending telemtry over the channel: {e:?}"
+                        );
                     }
                 }
                 Err(e) => {
-                    log::warn!("Failed to parse received telemetry: {e:?}");
+                    tracing::warn!("Failed to parse received telemetry: {e:?}");
                 }
             }
 

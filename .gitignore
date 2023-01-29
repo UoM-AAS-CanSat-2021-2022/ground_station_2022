@@ -5,3 +5,4 @@ Cargo.lock
 *.csv
 !/test_data/test_2022.csv
 *.png
+*.log
