@@ -49,7 +49,7 @@ impl TelemetryReader {
                 }
             }
 
-            thread::sleep(Duration::from_millis(200));
+            thread::sleep(Duration::from_secs(1));
         }
 
         Ok(())

@@ -51,6 +51,9 @@ impl GroundStationGui {
     }
 }
 
+// TODO: add view for all graphs
+// TODO: add a table view for all incoming data
+// TODO: add statistics view (e.g. number of dropped packets)
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.recv_telem();

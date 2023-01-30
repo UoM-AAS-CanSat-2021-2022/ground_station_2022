@@ -14,8 +14,7 @@ fn main() -> Result<()> {
     let log_file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
     std::fs::write(&log_file_name, "")?;
 
-    // FIXME: why isn't this working lmao
-    let file_appender = tracing_appender::rolling::never("../..", log_file_name);
+    let file_appender = tracing_appender::rolling::never(".", log_file_name);
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
@@ -43,7 +42,7 @@ fn main() -> Result<()> {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             let ppp = cc.egui_ctx.pixels_per_point();
             tracing::info!("ppp = {ppp}");
-            cc.egui_ctx.set_pixels_per_point(ppp * 0.9);
+            cc.egui_ctx.set_pixels_per_point(ppp * 1.2);
             Box::new(my_app)
         }),
     );
