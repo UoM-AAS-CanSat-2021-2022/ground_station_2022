@@ -1,0 +1,30 @@
+[package]
+name = "ground_station"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow             = "1.0"
+derive_builder     = "0.12"
+eframe             = "0.20"
+egui               = "0.20"
+egui_extras        = { version = "0.20", features = ["image"] }
+enum-iterator      = "1.2"
+image              = { version = "0.24", features = ["png"] }
+parse-display      = "0.8"
+rand               = "0.8"
+tracing            = "0.1"
+tracing-appender   = "0.2"
+tracing-egui       = "0.1"
+tracing-subscriber = "0.3"
+chrono             = "0.4"
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. egui), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
