@@ -22,7 +22,6 @@ use parse_display::{Display, FromStr};
     {mast_raised},{temperature:.1},{voltage:.1},{gps_time},{gps_altitude:.1},\
     {gps_latitude:.4},{gps_longitude:.4},{gps_sats},{tilt_x:.2},{tilt_y:.2},{cmd_echo}"
 )]
-#[non_exhaustive]
 pub struct Telemetry {
     /// TEAM_ID: four digit team identification number
     pub team_id: u16,
@@ -40,7 +39,7 @@ pub struct Telemetry {
     pub state: State,
 
     /// ALTITUDE: height in metres relative to the launch site, resolution of 0.1m.
-    pub altitude: f32,
+    pub altitude: f64,
 
     /// HS_DEPLOYED: P = probe with heat shield is deployed, N otherwise
     pub hs_deployed: HsDeployed,
@@ -52,22 +51,22 @@ pub struct Telemetry {
     pub mast_raised: MastRaised,
 
     /// TEMPERATURE: the temperature in celsiubs with a resolution of 0.1 C
-    pub temperature: f32,
+    pub temperature: f64,
 
     /// VOLTAGE: the voltage of the cansat power bus, with a resolution of 0.1 V
-    pub voltage: f32,
+    pub voltage: f64,
 
     /// GPS_TIME: time from the GPS receiver, must be reported in UTC and have a resolution of a second
     pub gps_time: GpsTime,
 
     /// GPS_ALTITUDE: altitude from the GPS receiver, in metres above mean sea level, resolution 0.1m
-    pub gps_altitude: f32,
+    pub gps_altitude: f64,
 
     /// GPS_LATITUDE: latitude from the GPS receiver, in decimal degrees with a resolution of 0.0001 degrees North
-    pub gps_latitude: f32,
+    pub gps_latitude: f64,
 
     /// GPS_LONGITUDE: longitude from the GPS receiver, in decimal degrees with a resolution of 0.0001 degrees West
-    pub gps_longitude: f32,
+    pub gps_longitude: f64,
 
     /// GPS_SATS: the number of GPS satellites being tracked by the GPS receiver, must be an integer lol
     pub gps_sats: u8,
@@ -75,12 +74,12 @@ pub struct Telemetry {
     /// TILT_X: angle of the CanSat X axes in degrees, with a resolution of 0.01 degrees.
     /// 0 degrees is defined as when the axes are perpendicular to the Z axes,
     /// which is defined as towards the centre of gravity of the earth.
-    pub tilt_x: f32,
+    pub tilt_x: f64,
 
     /// TILT_Y: angle of the CanSat Y axes in degrees, with a resolution of 0.01 degrees.
     /// 0 degrees is defined as when the axes are perpendicular to the Z axes,
     /// which is defined as towards the centre of gravity of the earth.
-    pub tilt_y: f32,
+    pub tilt_y: f64,
 
     /// CMD_ECHO: the last command received by the CanSat, e.g. CXON or SP101325.
     pub cmd_echo: String,

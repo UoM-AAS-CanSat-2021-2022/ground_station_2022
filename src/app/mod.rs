@@ -5,7 +5,7 @@ use std::sync::mpsc::Receiver;
 
 use derive_builder::Builder;
 use eframe::egui;
-use egui::plot::{Line, Plot, PlotPoint, PlotPoints};
+use egui::plot::{Line, Plot};
 use egui::WidgetText;
 use enum_iterator::all;
 
@@ -81,7 +81,7 @@ impl eframe::App for GroundStationGui {
                     .selected_text(format!("{}", self.main_graph_shows))
                     .show_ui(ui, |ui| {
                         for e in all::<Graphable>() {
-                            ui.selectable_value(&mut self.main_graph_shows, e, format!("{}", e));
+                            ui.selectable_value(&mut self.main_graph_shows, e, format!("{e}"));
                         }
                     });
             });
@@ -100,8 +100,8 @@ impl eframe::App for GroundStationGui {
                 .skip(to_skip)
                 .map(|telem| {
                     [
-                        telem.mission_time.as_seconds() as f64,
-                        self.main_graph_shows.extract_telemetry_value(telem) as f64,
+                        telem.mission_time.as_seconds(),
+                        self.main_graph_shows.extract_telemetry_value(telem),
                     ]
                 })
                 .collect();

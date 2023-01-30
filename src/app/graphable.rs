@@ -48,16 +48,16 @@ pub enum Graphable {
 }
 
 impl Graphable {
-    pub fn extract_telemetry_value(&self, telem: &Telemetry) -> f32 {
+    pub fn extract_telemetry_value(&self, telem: &Telemetry) -> f64 {
         match self {
-            Graphable::PacketCount => telem.packet_count as f32,
+            Graphable::PacketCount => telem.packet_count as f64,
             Graphable::Altitude => telem.altitude,
             Graphable::Temperature => telem.temperature,
             Graphable::Voltage => telem.voltage,
             Graphable::GpsAltitude => telem.gps_altitude,
             Graphable::GpsLatitude => telem.gps_latitude,
             Graphable::GpsLogitude => telem.gps_longitude,
-            Graphable::GpsSats => telem.gps_sats as f32,
+            Graphable::GpsSats => telem.gps_sats as f64,
             Graphable::TiltX => telem.tilt_x,
             Graphable::TiltY => telem.tilt_y,
         }
