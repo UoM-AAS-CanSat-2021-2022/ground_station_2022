@@ -14,6 +14,7 @@ fn main() -> Result<()> {
     let log_file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
     std::fs::write(&log_file_name, "")?;
 
+    // FIXME: why isn't this working lmao
     let file_appender = tracing_appender::rolling::never("../..", log_file_name);
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
@@ -26,7 +27,7 @@ fn main() -> Result<()> {
 
     // create a channel for communicating between the reader thread and the main thread
     let (tx, rx) = channel();
-    let mut reader = TelemetryReader::new(tx);
+    let mut reader = TelemetryReader::new(tx.clone());
     let _handle: JoinHandle<Result<()>> = thread::Builder::new()
         .name("reader".to_string())
         .spawn(move || reader.run())?;

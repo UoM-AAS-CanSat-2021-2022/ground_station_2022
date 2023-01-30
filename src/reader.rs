@@ -20,7 +20,7 @@ impl TelemetryReader {
 
     pub fn run(&mut self) -> Result<()> {
         // start the reader thread
-        let file = File::open("test_data/test_2022.csv")?;
+        let file = File::open("test_data/test_data.txt")?;
         let buf_reader = BufReader::new(file);
 
         // collect all the lines so we can cycle them
@@ -34,7 +34,7 @@ impl TelemetryReader {
                 }
                 Ok(line) => line,
             };
-            tracing::debug!("line = {:?}", line);
+            tracing::trace!("line = {:?}", line);
 
             match line.parse() {
                 Ok(telem) => {
