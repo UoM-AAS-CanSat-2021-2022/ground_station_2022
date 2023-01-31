@@ -1,19 +1,28 @@
+mod commands;
 mod graphable;
 
 use graphable::Graphable;
 
+use std::collections::HashMap;
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::mpsc::Receiver;
 
+use crate::app::commands::CommandPanel;
+use crate::as_str::AsStr;
 use derive_builder::Builder;
 use eframe::egui;
 use egui::plot::{Line, Plot};
+use egui::plot::{PlotPoint, PlotPoints};
 use egui::{Grid, Ui, Widget, WidgetText};
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
 use tracing_egui::LogPanel;
 
 use crate::telemetry::{Telemetry, TelemetryField};
+
+const TELEMETRY_FILE: &'static str = "telemetry.csv";
 
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
@@ -26,9 +35,8 @@ pub struct GroundStationGui {
     /// the collected telemetry from the current run
     telemetry: Vec<Telemetry>,
 
-    /// the values for displaying in the data table
-    /// MUST be kept up to date with `telemetry`
-    data_table_values: Vec<Vec<String>>,
+    /// the values for displaying in the graphs
+    graph_values: HashMap<Graphable, Vec<PlotPoint>>,
 
     // TODO: switch this for showing the last X seconds of telemetry
     #[builder(default = "40")]
@@ -39,6 +47,18 @@ pub struct GroundStationGui {
 
     /// what does the main view show
     main_view: MainPanelView,
+
+    /// Show the settings window?
+    show_settings_window: bool,
+
+    /// Show the command window?
+    show_command_window: bool,
+
+    /// Show the log window?
+    show_log_window: bool,
+
+    /// The command center
+    command_center: CommandPanel,
 }
 
 #[derive(Sequence, Debug, Default, Copy, Clone, Eq, PartialEq)]
@@ -48,17 +68,15 @@ pub enum MainPanelView {
     OneGraph,
     Table,
     Statistics,
-    Log,
 }
 
-impl MainPanelView {
+impl AsStr for MainPanelView {
     fn as_str(&self) -> &'static str {
         match self {
             MainPanelView::OneGraph => "One Graph",
             MainPanelView::AllGraphs => "All Graphs",
             MainPanelView::Table => "Data Table",
             MainPanelView::Statistics => "Statistics",
-            MainPanelView::Log => "Log View",
         }
     }
 }
@@ -99,7 +117,34 @@ impl GroundStationGui {
     // handles all the logic / state that must be kept in sync when adding telemetry
     fn add_telem(&mut self, telem: Telemetry) {
         tracing::debug!("{:?}", telem);
-        self.telemetry.push(telem);
+        self.telemetry.push(telem.clone());
+
+        // save the telemetry to the graph points
+        let time = telem.mission_time.as_seconds();
+        for field in all::<Graphable>() {
+            self.graph_values
+                .entry(field)
+                .or_default()
+                .push(PlotPoint::new(time, field.extract_telemetry_value(&telem)));
+        }
+
+        // save the telemetry out to the telemetry file
+        let handle = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(TELEMETRY_FILE);
+
+        let result = match handle {
+            Ok(mut file) => writeln!(file, "{telem}"),
+            Err(e) => {
+                tracing::warn!("Failed to open `{TELEMETRY_FILE}` - {e}.");
+                Ok(())
+            }
+        };
+
+        if let Err(e) = result {
+            tracing::warn!("Encountered error while writing to file: {e}");
+        }
     }
 
     fn settings(&mut self, ui: &mut Ui) {
@@ -143,18 +188,15 @@ impl GroundStationGui {
 
     fn graph(&mut self, ui: &mut Ui, id_source: &str, field: Graphable) {
         let to_skip = self.telemetry.len().saturating_sub(self.main_graph_len);
-        let points: Vec<[f64; 2]> = self
-            .telemetry
+        let points: Vec<PlotPoint> = self
+            .graph_values
+            .entry(field)
+            .or_default()
             .iter()
             .skip(to_skip)
-            .map(|telem| {
-                [
-                    telem.mission_time.as_seconds(),
-                    field.extract_telemetry_value(telem),
-                ]
-            })
+            .copied()
             .collect();
-        let line = Line::new(points);
+        let line = Line::new(PlotPoints::Owned(points)).name(field.as_str());
         Plot::new(id_source).show(ui, |plot_ui| plot_ui.line(line));
     }
 
@@ -227,16 +269,15 @@ impl GroundStationGui {
     fn stats_view(&mut self, ui: &mut Ui) {
         ui.heading("Statistics view");
     }
-
-    fn log_view(&mut self, ui: &mut Ui) {
-        LogPanel.ui(ui);
-    }
 }
 
 // TODO: add view for all graphs
 // TODO: add statistics view (e.g. number of dropped packets)
 // TODO: eventually use toasts for notifications https://github.com/ItsEthra/egui-notify
 //       this also looks pretty cool :) https://github.com/n00kii/egui-modal
+// TODO: add the telemetry file to the settings
+// TODO: add clearing the current telemetry to the settings
+// TODO: add a status indicator for whether we are still connected to the telemetry sender
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.recv_telem();
@@ -244,12 +285,27 @@ impl eframe::App for GroundStationGui {
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🚀 Manchester CanSat Project");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.show_settings_window, "⚙");
+                    ui.checkbox(&mut self.show_command_window, "🖧");
+                    ui.checkbox(&mut self.show_log_window, "👷");
+                });
             });
         });
 
-        egui::Window::new("settings").show(ctx, |ui| {
-            self.settings(ui);
-        });
+        if self.show_settings_window {
+            egui::Window::new("settings").show(ctx, |ui| {
+                self.settings(ui);
+            });
+        }
+
+        if self.show_command_window {
+            egui::Window::new("commands").show(ctx, |ui| self.command_center.show(ui));
+        }
+
+        if self.show_log_window {
+            egui::Window::new("logs").show(ctx, |ui| LogPanel.ui(ui));
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // match on the current view to decide what to draw
@@ -258,7 +314,6 @@ impl eframe::App for GroundStationGui {
                 MainPanelView::AllGraphs => self.all_graphs_view(ui),
                 MainPanelView::Table => self.data_table_view(ui),
                 MainPanelView::Statistics => self.stats_view(ui),
-                MainPanelView::Log => self.log_view(ui),
             }
         });
 

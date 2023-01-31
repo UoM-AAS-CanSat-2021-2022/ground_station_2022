@@ -1,9 +1,10 @@
+use crate::as_str::AsStr;
 use crate::telemetry::Telemetry;
 use enum_iterator::Sequence;
 use std::fmt;
 
 /// Enum represents all of the telemetry which is graphable
-#[derive(Sequence, Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Sequence, Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Graphable {
     /// PACKET_COUNT telemetry field
     #[default]
@@ -37,23 +38,25 @@ pub enum Graphable {
     TiltY,
 }
 
-impl Graphable {
+impl AsStr for Graphable {
     #[rustfmt::skip]
-    pub fn as_str(&self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             Graphable::PacketCount => "packet_count",
-            Graphable::Altitude    => "altitude",
+            Graphable::Altitude => "altitude",
             Graphable::Temperature => "temperature",
-            Graphable::Voltage     => "voltage",
+            Graphable::Voltage => "voltage",
             Graphable::GpsAltitude => "gps_altitude",
             Graphable::GpsLatitude => "gps_latitude",
             Graphable::GpsLogitude => "gps_logitude",
-            Graphable::GpsSats     => "gps_sats",
-            Graphable::TiltX       => "tilt_x",
-            Graphable::TiltY       => "tilt_y",
+            Graphable::GpsSats => "gps_sats",
+            Graphable::TiltX => "tilt_x",
+            Graphable::TiltY => "tilt_y",
         }
     }
+}
 
+impl Graphable {
     #[rustfmt::skip]
     pub fn extract_telemetry_value(&self, telem: &Telemetry) -> f64 {
         match self {

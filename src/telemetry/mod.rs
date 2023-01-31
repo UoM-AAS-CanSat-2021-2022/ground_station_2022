@@ -14,6 +14,7 @@ pub use mode::Mode;
 pub use pc_deployed::PcDeployed;
 pub use state::State;
 
+use crate::as_str::AsStr;
 use enum_iterator::Sequence;
 use parse_display::{Display, FromStr};
 use std::fmt;
@@ -137,9 +138,9 @@ pub enum TelemetryField {
     CmdEcho,
 }
 
-impl TelemetryField {
+impl AsStr for TelemetryField {
     #[rustfmt::skip]
-    pub fn as_str(&self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             TelemetryField::TeamId       => "TEAM_ID",
             TelemetryField::MissionTime  => "MISSION_TIME",
