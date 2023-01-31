@@ -17,7 +17,7 @@ parse-display      = "0.8"
 rand               = "0.8"
 tracing            = "0.1"
 tracing-appender   = "0.2"
-tracing-egui       = "0.1"
+tracing-egui       = { path = "./tracing-egui/" }
 tracing-subscriber = "0.3"
 chrono             = "0.4"
 

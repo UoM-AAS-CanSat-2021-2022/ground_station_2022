@@ -1,0 +1,18 @@
+[package]
+name = "tracing-egui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Integration to display tracing events in an egui context"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+egui = { version = "0.20", default-features = false }
+fxhash = { version = "0.2", default-features = false }
+indexmap = { version = "1.9", default-features = false, features = [ "std" ] }
+once_cell = { version = "1", default-features = false }
+parking_lot = { version = "0.12", default-features = false }
+smartstring = { version = "1", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false, features = [ "registry" ] }
+

@@ -8,9 +8,10 @@ use std::sync::mpsc::Receiver;
 use derive_builder::Builder;
 use eframe::egui;
 use egui::plot::{Line, Plot};
-use egui::{Ui, WidgetText};
+use egui::{Grid, Ui, Widget, WidgetText};
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
+use tracing_egui::LogPanel;
 
 use crate::telemetry::{Telemetry, TelemetryField};
 
@@ -140,8 +141,7 @@ impl GroundStationGui {
         });
     }
 
-    fn one_graph_view(&mut self, ui: &mut Ui) {
-        ui.heading(format!("Main graph showing: {}", self.main_graph_shows));
+    fn graph(&mut self, ui: &mut Ui, id_source: &str, field: Graphable) {
         let to_skip = self.telemetry.len().saturating_sub(self.main_graph_len);
         let points: Vec<[f64; 2]> = self
             .telemetry
@@ -150,53 +150,77 @@ impl GroundStationGui {
             .map(|telem| {
                 [
                     telem.mission_time.as_seconds(),
-                    self.main_graph_shows.extract_telemetry_value(telem),
+                    field.extract_telemetry_value(telem),
                 ]
             })
             .collect();
         let line = Line::new(points);
-        Plot::new("main_plot").show(ui, |plot_ui| plot_ui.line(line));
+        Plot::new(id_source).show(ui, |plot_ui| plot_ui.line(line));
+    }
+
+    fn one_graph_view(&mut self, ui: &mut Ui) {
+        ui.heading(format!("Main graph showing: {}", self.main_graph_shows));
+        self.graph(ui, "main_plot", self.main_graph_shows);
     }
 
     fn all_graphs_view(&mut self, ui: &mut Ui) {
-        ui.heading("All graphs view");
+        let avail_height = ui.available_height();
+        let avail_width = ui.available_height();
+        Grid::new("all_graphs")
+            .min_col_width(avail_width / 6.0)
+            .min_row_height(avail_height / 2.5)
+            .show(ui, |ui| {
+                for (i, field) in all::<Graphable>().enumerate() {
+                    ui.vertical_centered_justified(|ui| {
+                        self.graph(ui, field.as_str(), field);
+                    });
+                    if i == 4 || i == 9 {
+                        ui.end_row();
+                    }
+                }
+            });
     }
 
     fn data_table_view(&mut self, ui: &mut Ui) {
         const ROW_HEIGHT: f32 = 20.0;
         const COL_WIDTH_MULT: f32 = 13.0;
 
-        let mut builder = TableBuilder::new(ui).striped(true).stick_to_bottom(true);
-
-        for field in all::<TelemetryField>() {
-            let min_width = field.as_str().len() as f32 * COL_WIDTH_MULT;
-            builder = builder.column(
-                Column::initial(min_width)
-                    .at_least(min_width)
-                    .resizable(true),
-            );
-        }
-
-        builder
+        egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
-            .max_scroll_height(f32::INFINITY)
-            .header(ROW_HEIGHT + 5.0, |mut header| {
-                for field in all::<TelemetryField>() {
-                    header.col(|ui| {
-                        ui.heading(field.as_str());
-                    });
-                }
-            })
-            .body(|body| {
-                body.rows(ROW_HEIGHT, self.telemetry.len(), |row_index, mut row| {
-                    let telem = &self.telemetry[row_index];
+            .max_height(f32::INFINITY)
+            .show(ui, |ui| {
+                let mut builder = TableBuilder::new(ui).striped(true).stick_to_bottom(true);
 
-                    for field in all::<TelemetryField>() {
-                        row.col(|ui| {
-                            ui.label(telem.get_field(field));
+                for field in all::<TelemetryField>() {
+                    let min_width = field.as_str().len() as f32 * COL_WIDTH_MULT;
+                    builder = builder.column(
+                        Column::initial(min_width)
+                            .at_least(min_width)
+                            .resizable(true),
+                    );
+                }
+
+                builder
+                    .auto_shrink([false, false])
+                    .max_scroll_height(f32::INFINITY)
+                    .header(ROW_HEIGHT + 5.0, |mut header| {
+                        for field in all::<TelemetryField>() {
+                            header.col(|ui| {
+                                ui.heading(field.as_str());
+                            });
+                        }
+                    })
+                    .body(|body| {
+                        body.rows(ROW_HEIGHT, self.telemetry.len(), |row_index, mut row| {
+                            let telem = &self.telemetry[row_index];
+
+                            for field in all::<TelemetryField>() {
+                                row.col(|ui| {
+                                    ui.label(telem.get_field(field));
+                                });
+                            }
                         });
-                    }
-                });
+                    });
             });
     }
 
@@ -205,7 +229,7 @@ impl GroundStationGui {
     }
 
     fn log_view(&mut self, ui: &mut Ui) {
-        ui.heading("Log panel view");
+        LogPanel.ui(ui);
     }
 }
 
@@ -232,12 +256,7 @@ impl eframe::App for GroundStationGui {
             match self.main_view {
                 MainPanelView::OneGraph => self.one_graph_view(ui),
                 MainPanelView::AllGraphs => self.all_graphs_view(ui),
-                MainPanelView::Table => {
-                    egui::ScrollArea::horizontal()
-                        .auto_shrink([false, false])
-                        .max_height(f32::INFINITY)
-                        .show(ui, |ui| self.data_table_view(ui));
-                }
+                MainPanelView::Table => self.data_table_view(ui),
                 MainPanelView::Statistics => self.stats_view(ui),
                 MainPanelView::Log => self.log_view(ui),
             }
