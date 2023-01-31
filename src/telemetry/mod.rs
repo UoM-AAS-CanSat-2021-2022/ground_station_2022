@@ -14,7 +14,9 @@ pub use mode::Mode;
 pub use pc_deployed::PcDeployed;
 pub use state::State;
 
+use enum_iterator::Sequence;
 use parse_display::{Display, FromStr};
+use std::fmt;
 
 #[derive(Display, FromStr, Clone, Debug, PartialEq)]
 #[display(
@@ -83,6 +85,89 @@ pub struct Telemetry {
 
     /// CMD_ECHO: the last command received by the CanSat, e.g. CXON or SP101325.
     pub cmd_echo: String,
+}
+
+impl Telemetry {
+    #[rustfmt::skip]
+    pub fn get_field(&self, field: TelemetryField) -> String {
+        match field {
+            TelemetryField::TeamId       => format!("{}", self.team_id),
+            TelemetryField::MissionTime  => format!("{}", self.mission_time),
+            TelemetryField::PacketCount  => format!("{}", self.packet_count),
+            TelemetryField::Mode         => format!("{}", self.mode),
+            TelemetryField::State        => format!("{}", self.state),
+            TelemetryField::Altitude     => format!("{}", self.altitude),
+            TelemetryField::HsDeployed   => format!("{}", self.hs_deployed),
+            TelemetryField::PcDeployed   => format!("{}", self.pc_deployed),
+            TelemetryField::MastRaised   => format!("{}", self.mast_raised),
+            TelemetryField::Temperature  => format!("{}", self.temperature),
+            TelemetryField::Voltage      => format!("{}", self.voltage),
+            TelemetryField::GpsTime      => format!("{}", self.gps_time),
+            TelemetryField::GpsAltitude  => format!("{}", self.gps_altitude),
+            TelemetryField::GpsLatitude  => format!("{}", self.gps_latitude),
+            TelemetryField::GpsLongitude => format!("{}", self.gps_longitude),
+            TelemetryField::GpsSats      => format!("{}", self.gps_sats),
+            TelemetryField::TiltX        => format!("{}", self.tilt_x),
+            TelemetryField::TiltY        => format!("{}", self.tilt_y),
+            TelemetryField::CmdEcho      => format!("{}", self.cmd_echo),
+        }
+    }
+}
+
+#[derive(Sequence, Debug, Copy, Clone, Eq, PartialEq)]
+pub enum TelemetryField {
+    TeamId,
+    MissionTime,
+    PacketCount,
+    Mode,
+    State,
+    Altitude,
+    HsDeployed,
+    PcDeployed,
+    MastRaised,
+    Temperature,
+    Voltage,
+    GpsTime,
+    GpsAltitude,
+    GpsLatitude,
+    GpsLongitude,
+    GpsSats,
+    TiltX,
+    TiltY,
+    CmdEcho,
+}
+
+impl TelemetryField {
+    #[rustfmt::skip]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TelemetryField::TeamId       => "TEAM_ID",
+            TelemetryField::MissionTime  => "MISSION_TIME",
+            TelemetryField::PacketCount  => "PACKET_COUNT",
+            TelemetryField::Mode         => "MODE",
+            TelemetryField::State        => "STATE",
+            TelemetryField::Altitude     => "ALTITUDE",
+            TelemetryField::HsDeployed   => "HS_DEPLOYED",
+            TelemetryField::PcDeployed   => "PC_DEPLOYED",
+            TelemetryField::MastRaised   => "MAST_RAISED",
+            TelemetryField::Temperature  => "TEMPERATURE",
+            TelemetryField::Voltage      => "VOLTAGE",
+            TelemetryField::GpsTime      => "GPS_TIME",
+            TelemetryField::GpsAltitude  => "GPS_ALTITUDE",
+            TelemetryField::GpsLatitude  => "GPS_LATITUDE",
+            TelemetryField::GpsLongitude => "GPS_LONGITUDE",
+            TelemetryField::GpsSats      => "GPS_SATS",
+            TelemetryField::TiltX        => "TILT_X",
+            TelemetryField::TiltY        => "TILT_Y",
+            TelemetryField::CmdEcho      => "CMD_ECHO",
+        }
+    }
+}
+
+impl fmt::Display for TelemetryField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[cfg(test)]
