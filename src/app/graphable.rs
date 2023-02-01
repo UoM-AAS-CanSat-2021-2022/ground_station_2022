@@ -42,16 +42,16 @@ impl AsStr for Graphable {
     #[rustfmt::skip]
     fn as_str(&self) -> &'static str {
         match self {
-            Graphable::PacketCount => "packet_count",
-            Graphable::Altitude => "altitude",
-            Graphable::Temperature => "temperature",
-            Graphable::Voltage => "voltage",
-            Graphable::GpsAltitude => "gps_altitude",
-            Graphable::GpsLatitude => "gps_latitude",
-            Graphable::GpsLogitude => "gps_logitude",
-            Graphable::GpsSats => "gps_sats",
-            Graphable::TiltX => "tilt_x",
-            Graphable::TiltY => "tilt_y",
+            Graphable::PacketCount => "Packet Count",
+            Graphable::Altitude => "Altitude",
+            Graphable::Temperature => "Temperature",
+            Graphable::Voltage => "Voltage",
+            Graphable::GpsAltitude => "GPS Altitude",
+            Graphable::GpsLatitude => "GPS Latitude",
+            Graphable::GpsLogitude => "GPS Logitude",
+            Graphable::GpsSats => "GPS Satellites",
+            Graphable::TiltX => "Tilt - X axis",
+            Graphable::TiltY => "Tilt - Y axis",
         }
     }
 }

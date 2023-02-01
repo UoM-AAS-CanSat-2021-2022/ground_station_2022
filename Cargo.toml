@@ -9,8 +9,8 @@ edition = "2021"
 anyhow             = "1.0"
 derive_builder     = "0.12"
 eframe             = "0.20"
-egui               = "0.20"
-egui_extras        = { version = "0.20", features = ["image"] }
+egui               = { version = "0.20", features = ["tracing"] }
+egui_extras        = { version = "0.20", features = ["image", "tracing"] }
 enum-iterator      = "1.2"
 image              = { version = "0.24", features = ["png"] }
 parse-display      = "0.8"

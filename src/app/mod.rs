@@ -171,15 +171,6 @@ impl GroundStationGui {
                     }
                 });
         });
-        settings_row(ui, "one graph shows", |ui| {
-            egui::ComboBox::from_id_source("one_graph")
-                .selected_text(self.main_graph_shows.as_str())
-                .show_ui(ui, |ui| {
-                    for e in all::<Graphable>() {
-                        ui.selectable_value(&mut self.main_graph_shows, e, e.as_str());
-                    }
-                });
-        });
         settings_row(ui, "graph points", |ui| {
             let max = usize::max(100, self.main_graph_len);
             ui.add(egui::Slider::new(&mut self.main_graph_len, 1..=max).clamp_to_range(false));
@@ -201,19 +192,31 @@ impl GroundStationGui {
     }
 
     fn one_graph_view(&mut self, ui: &mut Ui) {
-        ui.heading(format!("Main graph showing: {}", self.main_graph_shows));
+        ui.horizontal(|ui| {
+            ui.heading("Main graph showing: ");
+            egui::ComboBox::from_id_source("main_graph")
+                .selected_text(self.main_graph_shows.as_str())
+                .show_ui(ui, |ui| {
+                    for e in all::<Graphable>() {
+                        ui.selectable_value(&mut self.main_graph_shows, e, e.as_str());
+                    }
+                });
+        });
         self.graph(ui, "main_plot", self.main_graph_shows);
     }
 
     fn all_graphs_view(&mut self, ui: &mut Ui) {
-        let avail_height = ui.available_height();
-        let avail_width = ui.available_height();
+        let width = ui.available_width() / 5.0;
+        let height = ui.available_height() / 2.0;
         Grid::new("all_graphs")
-            .min_col_width(avail_width / 6.0)
-            .min_row_height(avail_height / 2.5)
+            .min_col_width(width)
+            .max_col_width(width)
+            .min_row_height(height)
+            .spacing([5.0, 5.0])
             .show(ui, |ui| {
                 for (i, field) in all::<Graphable>().enumerate() {
-                    ui.vertical_centered_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.heading(field.as_str());
                         self.graph(ui, field.as_str(), field);
                     });
                     if i == 4 || i == 9 {
@@ -272,12 +275,14 @@ impl GroundStationGui {
 }
 
 // TODO: add view for all graphs
+// TODO: add changing the font size to the settings
 // TODO: add statistics view (e.g. number of dropped packets)
 // TODO: eventually use toasts for notifications https://github.com/ItsEthra/egui-notify
 //       this also looks pretty cool :) https://github.com/n00kii/egui-modal
 // TODO: add the telemetry file to the settings
 // TODO: add clearing the current telemetry to the settings
 // TODO: add a status indicator for whether we are still connected to the telemetry sender
+// TODO: add a status window for replaying simulated pressure data (with pause + play?)
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.recv_telem();
