@@ -45,7 +45,8 @@ fn main() -> Result<()> {
             // cc.egui_ctx.set_pixels_per_point(ppp);
             Box::new(my_app)
         }),
-    );
+    )
+    .unwrap();
 
     Ok(())
 }

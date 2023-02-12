@@ -8,9 +8,9 @@ edition = "2021"
 [dependencies]
 anyhow             = "1.0"
 derive_builder     = "0.12"
-eframe             = "0.20"
-egui               = { version = "0.20", features = ["tracing"] }
-egui_extras        = { version = "0.20", features = ["image", "tracing"] }
+eframe             = "0.21"
+egui               = { version = "0.21", features = ["tracing"] }
+egui_extras        = { version = "0.21", features = ["image", "tracing"] }
 enum-iterator      = "1.2"
 image              = { version = "0.24", features = ["png"] }
 parse-display      = "0.8"
@@ -20,6 +20,9 @@ tracing-appender   = "0.2"
 tracing-egui       = { path = "./tracing-egui/" }
 tracing-subscriber = "0.3"
 chrono             = "0.4"
+serialport         = "4.2"
+hex-literal        = "0.3"
+byteorder = "1.4.3"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

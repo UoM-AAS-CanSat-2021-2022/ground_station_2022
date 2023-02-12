@@ -15,10 +15,9 @@ use derive_builder::Builder;
 use eframe::egui;
 use egui::plot::{Line, Plot};
 use egui::plot::{PlotPoint, PlotPoints};
-use egui::{Grid, Ui, Widget, WidgetText};
+use egui::{Grid, Ui, WidgetText};
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
-use tracing_egui::LogPanel;
 
 use crate::telemetry::{Telemetry, TelemetryField};
 
@@ -274,6 +273,7 @@ impl GroundStationGui {
     }
 }
 
+// TODO: add view for controlling the radio
 // TODO: add view for all graphs
 // TODO: add changing the font size to the settings
 // TODO: add statistics view (e.g. number of dropped packets)
@@ -309,7 +309,7 @@ impl eframe::App for GroundStationGui {
         }
 
         if self.show_log_window {
-            egui::Window::new("logs").show(ctx, |ui| LogPanel.ui(ui));
+            let _ = egui::Window::new("logs"); //.show(ctx, |ui| LogPanel.ui(ui));
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
