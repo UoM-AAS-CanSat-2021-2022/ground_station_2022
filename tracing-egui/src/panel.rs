@@ -29,10 +29,11 @@ impl egui::Widget for LogPanel {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let id = ui.make_persistent_id("tracing-egui::LogPanel");
         let mut state = ui
-            .memory()
-            .data
-            .get_temp_mut_or_default::<LogPanelState>(id)
-            .clone();
+            .memory_mut(|mem| {
+                mem.data
+                    .get_temp_mut_or_default::<LogPanelState>(id)
+                    .clone()
+            });
 
         let mut response = ui
             .centered_and_justified(|ui| {
@@ -127,7 +128,7 @@ impl egui::Widget for LogPanel {
             }
         }
 
-        ui.memory().data.insert_temp(id, state);
+        ui.memory_mut(|mem| mem.data.insert_temp(id, state));
         response
     }
 }
