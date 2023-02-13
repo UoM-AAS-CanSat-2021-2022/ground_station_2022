@@ -6,6 +6,8 @@ use std::num::Wrapping;
 mod tx_request;
 pub use tx_request::TxRequest;
 
+pub const BAUD_RATES: [u32; 9] = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400];
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct XbeePacket {
     frame_type: u8,

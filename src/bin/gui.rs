@@ -40,9 +40,6 @@ fn main() -> Result<()> {
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            // let ppp = cc.egui_ctx.pixels_per_point();
-            // tracing::info!("ppp = {ppp}");
-            // cc.egui_ctx.set_pixels_per_point(ppp);
             Box::new(my_app)
         }),
     )

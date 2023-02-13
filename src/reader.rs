@@ -50,6 +50,7 @@ impl TelemetryReader {
             }
 
             thread::sleep(Duration::from_secs(1));
+            // thread::sleep(Duration::from_millis(50));
         }
 
         Ok(())

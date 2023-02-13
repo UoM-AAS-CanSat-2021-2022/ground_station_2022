@@ -12,14 +12,18 @@ use std::sync::mpsc::Receiver;
 use crate::app::commands::CommandPanel;
 use crate::as_str::AsStr;
 use derive_builder::Builder;
-use eframe::egui;
-use egui::plot::{Line, Plot};
-use egui::plot::{PlotPoint, PlotPoints};
-use egui::{Grid, Ui, WidgetText};
+use eframe::{egui, emath::Align};
+use egui::{
+    plot::{Line, Plot},
+    plot::{PlotPoint, PlotPoints},
+    Color32, Grid, Layout, Ui,
+};
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
+use serialport::{SerialPort, SerialPortType};
 
 use crate::telemetry::{Telemetry, TelemetryField};
+use crate::xbee::BAUD_RATES;
 
 const TELEMETRY_FILE: &'static str = "telemetry.csv";
 
@@ -37,12 +41,22 @@ pub struct GroundStationGui {
     /// the values for displaying in the graphs
     graph_values: HashMap<Graphable, Vec<PlotPoint>>,
 
-    // TODO: switch this for showing the last X seconds of telemetry
+    /// how many telemetry points does the one graph view show?
     #[builder(default = "40")]
-    main_graph_len: usize,
+    one_graph_points: usize,
+
+    /// how many telemetry points does the all graphs view show?
+    #[builder(default = "40")]
+    all_graphs_points: usize,
+
+    /// show all the points in the one graph view?
+    one_graph_shows_all: bool,
+
+    /// do we show all the points in the all graphg view?
+    all_graphs_show_all: bool,
 
     /// what does the main graph view show
-    main_graph_shows: Graphable,
+    one_graph_shows: Graphable,
 
     /// what does the main view show
     main_view: MainPanelView,
@@ -53,20 +67,31 @@ pub struct GroundStationGui {
     /// Show the command window?
     show_command_window: bool,
 
-    /// Show the log window?
-    show_log_window: bool,
+    /// Show the radio window?
+    show_radio_window: bool,
 
     /// The command center
     command_center: CommandPanel,
+
+    /// The radio's serial port name
+    radio_port: String,
+
+    /// The radio's baud rate
+    #[builder(default = "230400")]
+    radio_baud: u32,
+
+    /// The XBee radio serial port connection
+    radio: Option<Box<dyn SerialPort>>,
 }
 
+// TODO: add a commands sent view
+// TODO: add a packets view
 #[derive(Sequence, Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum MainPanelView {
     #[default]
     AllGraphs,
     OneGraph,
     Table,
-    Statistics,
 }
 
 impl AsStr for MainPanelView {
@@ -75,7 +100,6 @@ impl AsStr for MainPanelView {
             MainPanelView::OneGraph => "One Graph",
             MainPanelView::AllGraphs => "All Graphs",
             MainPanelView::Table => "Data Table",
-            MainPanelView::Statistics => "Statistics",
         }
     }
 }
@@ -146,38 +170,25 @@ impl GroundStationGui {
         }
     }
 
-    fn settings(&mut self, ui: &mut Ui) {
-        // handy for changing all the rows at once
-        fn settings_row(
-            ui: &mut Ui,
-            label_text: impl Into<WidgetText>,
-            setting: impl FnOnce(&mut Ui),
-        ) {
-            ui.horizontal(|ui| {
-                ui.label(label_text);
-                setting(ui);
-            });
+    fn open_radio_connection(&mut self) {
+        // try to open the new radio
+        match serialport::new(&self.radio_port, self.radio_baud).open() {
+            Ok(port) => {
+                self.radio = Some(port);
+                tracing::info!("Successfully opened port.");
+            }
+            Err(e) => {
+                self.radio = None;
+                tracing::error!("Failed to open port - {e:?}");
+            }
         }
-
-        ui.heading("Settings");
-        settings_row(ui, "theme", egui::widgets::global_dark_light_mode_buttons);
-        settings_row(ui, "main view shows", |ui| {
-            egui::ComboBox::from_id_source("main_graph")
-                .selected_text(self.main_view.as_str())
-                .show_ui(ui, |ui| {
-                    for e in all::<MainPanelView>() {
-                        ui.selectable_value(&mut self.main_view, e, e.as_str());
-                    }
-                });
-        });
-        settings_row(ui, "graph points", |ui| {
-            let max = usize::max(100, self.main_graph_len);
-            ui.add(egui::Slider::new(&mut self.main_graph_len, 1..=max).clamp_to_range(false));
-        });
     }
+}
 
-    fn graph(&mut self, ui: &mut Ui, id_source: &str, field: Graphable) {
-        let to_skip = self.telemetry.len().saturating_sub(self.main_graph_len);
+/// GUI components
+impl GroundStationGui {
+    fn graph(&mut self, ui: &mut Ui, id_source: &str, field: Graphable, to_show: usize) {
+        let to_skip = self.telemetry.len().saturating_sub(to_show);
         let points: Vec<PlotPoint> = self
             .graph_values
             .entry(field)
@@ -192,21 +203,57 @@ impl GroundStationGui {
 
     fn one_graph_view(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.heading("Main graph showing: ");
+            ui.label("Graph showing: ");
             egui::ComboBox::from_id_source("main_graph")
-                .selected_text(self.main_graph_shows.as_str())
+                .selected_text(self.one_graph_shows.as_str())
+                .width(120.0)
+                .wrap(false)
                 .show_ui(ui, |ui| {
                     for e in all::<Graphable>() {
-                        ui.selectable_value(&mut self.main_graph_shows, e, e.as_str());
+                        ui.selectable_value(&mut self.one_graph_shows, e, e.as_str());
                     }
                 });
+
+            ui.label("No. Points: ");
+            ui.add_enabled_ui(!self.one_graph_shows_all, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.one_graph_points, 5..=100).clamp_to_range(false),
+                );
+            });
+
+            ui.label("Show all: ");
+            ui.add(egui::Checkbox::new(&mut self.one_graph_shows_all, ""));
         });
-        self.graph(ui, "main_plot", self.main_graph_shows);
+
+        let to_show = if self.one_graph_shows_all {
+            usize::MAX
+        } else {
+            self.one_graph_points
+        };
+        self.graph(ui, "main_plot", self.one_graph_shows, to_show);
     }
 
     fn all_graphs_view(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("No. Points: ");
+            ui.add_enabled_ui(!self.all_graphs_show_all, |ui| {
+                ui.add(
+                    egui::Slider::new(&mut self.all_graphs_points, 5..=100).clamp_to_range(false),
+                );
+            });
+
+            ui.label("Show all: ");
+            ui.add(egui::Checkbox::new(&mut self.all_graphs_show_all, ""));
+        });
+
+        let to_show = if self.all_graphs_show_all {
+            usize::MAX
+        } else {
+            self.all_graphs_points
+        };
         let width = ui.available_width() / 5.0;
         let height = ui.available_height() / 2.0;
+
         Grid::new("all_graphs")
             .min_col_width(width)
             .max_col_width(width)
@@ -216,7 +263,7 @@ impl GroundStationGui {
                 for (i, field) in all::<Graphable>().enumerate() {
                     ui.vertical_centered(|ui| {
                         ui.heading(field.as_str());
-                        self.graph(ui, field.as_str(), field);
+                        self.graph(ui, field.as_str(), field, to_show);
                     });
                     if i == 4 || i == 9 {
                         ui.end_row();
@@ -268,8 +315,75 @@ impl GroundStationGui {
             });
     }
 
-    fn stats_view(&mut self, ui: &mut Ui) {
-        ui.heading("Statistics view");
+    fn radio_window(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Serial port: ");
+            ui.vertical_centered(|ui| {
+                let Ok(ports) = serialport::available_ports() else {
+                        ui.label("Failed to get availble ports.");
+                        return;
+                    };
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    egui::ComboBox::from_id_source("radio_baud_combobox")
+                        .selected_text(&self.radio_port)
+                        .show_ui(ui, |ui| {
+                            for port in ports {
+                                if matches!(port.port_type, SerialPortType::UsbPort(_)) {
+                                    let value = ui.selectable_value(
+                                        &mut self.radio_port,
+                                        port.port_name.clone(),
+                                        &port.port_name,
+                                    );
+
+                                    if value.changed() {
+                                        tracing::info!("Set radio port to {:?}", port.port_name);
+                                    }
+                                }
+                            }
+                        });
+                });
+            });
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Baud rate: ");
+            ui.vertical_centered(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    egui::ComboBox::from_id_source("radio_port_combobox")
+                        .selected_text(self.radio_baud.to_string())
+                        .show_ui(ui, |ui| {
+                            for baud in BAUD_RATES {
+                                let value = ui.selectable_value(
+                                    &mut self.radio_baud,
+                                    baud,
+                                    baud.to_string(),
+                                );
+
+                                if value.changed() {
+                                    tracing::info!("Set radio baud to {baud}");
+                                }
+                            }
+                        });
+                });
+            });
+        });
+
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            if ui.button("Open port").clicked() {
+                self.open_radio_connection();
+            }
+        });
+
+        ui.separator();
+
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            if self.radio.is_some() {
+                ui.colored_label(Color32::GREEN, "Connected");
+            } else {
+                ui.colored_label(Color32::RED, "Disconnected");
+            }
+        });
     }
 }
 
@@ -290,26 +404,58 @@ impl eframe::App for GroundStationGui {
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("🚀 Manchester CanSat Project");
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.show_settings_window, "⚙");
-                    ui.checkbox(&mut self.show_command_window, "🖧");
-                    ui.checkbox(&mut self.show_log_window, "👷");
+                ui.separator();
+
+                egui::global_dark_light_mode_switch(ui);
+                ui.separator();
+
+                // main view buttons
+                for view in all::<MainPanelView>() {
+                    let label = ui.selectable_label(self.main_view == view, view.as_str());
+                    if label.clicked() {
+                        self.main_view = view;
+                    }
+                }
+
+                // optional windows
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.horizontal(|ui| {
+                        // rightmost
+                        ui.checkbox(&mut self.show_command_window, "🖧 Commands");
+                        ui.checkbox(&mut self.show_radio_window, "📻 Radio");
+                        ui.checkbox(&mut self.show_settings_window, "⚙ Settings");
+                        // leftmost
+                    });
                 });
             });
         });
 
+        // scuffed but yeah
+        let mut open;
         if self.show_settings_window {
-            egui::Window::new("settings").show(ctx, |ui| {
-                self.settings(ui);
-            });
+            open = true;
+            egui::Window::new("settings")
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ctx.settings_ui(ui);
+                });
+            self.show_settings_window = open;
         }
 
         if self.show_command_window {
-            egui::Window::new("commands").show(ctx, |ui| self.command_center.show(ui));
+            open = true;
+            egui::Window::new("commands")
+                .open(&mut open)
+                .show(ctx, |ui| self.command_center.show(ui));
+            self.show_radio_window = open;
         }
 
-        if self.show_log_window {
-            let _ = egui::Window::new("logs"); //.show(ctx, |ui| LogPanel.ui(ui));
+        if self.show_radio_window {
+            open = true;
+            egui::Window::new("radio")
+                .open(&mut open)
+                .show(ctx, |ui| self.radio_window(ui));
+            self.show_radio_window = open;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -318,7 +464,6 @@ impl eframe::App for GroundStationGui {
                 MainPanelView::OneGraph => self.one_graph_view(ui),
                 MainPanelView::AllGraphs => self.all_graphs_view(ui),
                 MainPanelView::Table => self.data_table_view(ui),
-                MainPanelView::Statistics => self.stats_view(ui),
             }
         });
 

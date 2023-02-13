@@ -26,7 +26,7 @@ pub enum Graphable {
     GpsLatitude,
 
     /// GPS_LONGITUDE telemetry field
-    GpsLogitude,
+    GpsLongitude,
 
     /// GPS_SATS telemetry field
     GpsSats,
@@ -48,7 +48,7 @@ impl AsStr for Graphable {
             Graphable::Voltage => "Voltage",
             Graphable::GpsAltitude => "GPS Altitude",
             Graphable::GpsLatitude => "GPS Latitude",
-            Graphable::GpsLogitude => "GPS Logitude",
+            Graphable::GpsLongitude => "GPS Longitude",
             Graphable::GpsSats => "GPS Satellites",
             Graphable::TiltX => "Tilt - X axis",
             Graphable::TiltY => "Tilt - Y axis",
@@ -66,7 +66,7 @@ impl Graphable {
             Graphable::Voltage     => telem.voltage,
             Graphable::GpsAltitude => telem.gps_altitude,
             Graphable::GpsLatitude => telem.gps_latitude,
-            Graphable::GpsLogitude => telem.gps_longitude,
+            Graphable::GpsLongitude => telem.gps_longitude,
             Graphable::GpsSats     => telem.gps_sats as f64,
             Graphable::TiltX       => telem.tilt_x,
             Graphable::TiltY       => telem.tilt_y,
