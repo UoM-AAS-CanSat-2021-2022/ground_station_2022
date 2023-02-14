@@ -1,3 +1,4 @@
+use std::env::args;
 use std::io;
 use std::sync::mpsc::channel;
 use std::thread::{self, JoinHandle};
@@ -5,6 +6,7 @@ use std::thread::{self, JoinHandle};
 use anyhow::Result;
 use eframe::egui;
 use ground_station::app::{GroundStationGui, GroundStationGuiBuilder};
+use ground_station::listener::TelemetryListener;
 use ground_station::reader::TelemetryReader;
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -26,10 +28,20 @@ fn main() -> Result<()> {
 
     // create a channel for communicating between the reader thread and the main thread
     let (tx, rx) = channel();
-    let mut reader = TelemetryReader::new(tx.clone());
-    let _handle: JoinHandle<Result<()>> = thread::Builder::new()
-        .name("reader".to_string())
-        .spawn(move || reader.run())?;
+
+    if args().nth(1) == Some(String::from("listen")) {
+        // allow listening from the
+        let mut listener = TelemetryListener::new(tx.clone());
+        let _handle: JoinHandle<Result<()>> = thread::Builder::new()
+            .name("listener".to_string())
+            .spawn(move || listener.run())?;
+    } else {
+        // default to just repeating the data from the file
+        let mut reader = TelemetryReader::new(tx.clone());
+        let _handle: JoinHandle<Result<()>> = thread::Builder::new()
+            .name("reader".to_string())
+            .spawn(move || reader.run())?;
+    }
 
     // run GUI
     let options = eframe::NativeOptions::default();

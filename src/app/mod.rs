@@ -31,34 +31,37 @@ const TELEMETRY_FILE: &'static str = "telemetry.csv";
 #[builder(pattern = "owned", default)]
 #[derive(Default)]
 pub struct GroundStationGui {
-    /// the receiving end of the channel
+    /// The receiving end of the channel
     #[builder(setter(strip_option))]
     rx: Option<Receiver<Telemetry>>,
 
-    /// the collected telemetry from the current run
+    /// The collected telemetry from the current run
     telemetry: Vec<Telemetry>,
 
-    /// the values for displaying in the graphs
+    /// The values for displaying in the graphs
     graph_values: HashMap<Graphable, Vec<PlotPoint>>,
 
-    /// how many telemetry points does the one graph view show?
+    /// The number of missed telemetry packets
+    missed_packets: u32,
+
+    /// How many telemetry points does the one graph view show?
     #[builder(default = "40")]
     one_graph_points: usize,
 
-    /// how many telemetry points does the all graphs view show?
+    /// How many telemetry points does the all graphs view show?
     #[builder(default = "40")]
     all_graphs_points: usize,
 
-    /// show all the points in the one graph view?
+    /// Show all the points in the one graph view?
     one_graph_shows_all: bool,
 
-    /// do we show all the points in the all graphg view?
+    /// Do we show all the points in the all graphg view?
     all_graphs_show_all: bool,
 
-    /// what does the main graph view show
+    /// What does the one graph view show?
     one_graph_shows: Graphable,
 
-    /// what does the main view show
+    /// What does the main view show?
     main_view: MainPanelView,
 
     /// Show the settings window?
@@ -139,6 +142,11 @@ impl GroundStationGui {
 
     // handles all the logic / state that must be kept in sync when adding telemetry
     fn add_telem(&mut self, telem: Telemetry) {
+        // calculate how many packets we missed if any
+        if let Some(prev) = self.telemetry.last() {
+            self.missed_packets += telem.packet_count - 1 - prev.packet_count;
+        }
+
         tracing::debug!("{:?}", telem);
         self.telemetry.push(telem.clone());
 
@@ -223,6 +231,8 @@ impl GroundStationGui {
 
             ui.label("Show all: ");
             ui.add(egui::Checkbox::new(&mut self.one_graph_shows_all, ""));
+
+            self.missed_packets_widget(ui);
         });
 
         let to_show = if self.one_graph_shows_all {
@@ -244,6 +254,9 @@ impl GroundStationGui {
 
             ui.label("Show all: ");
             ui.add(egui::Checkbox::new(&mut self.all_graphs_show_all, ""));
+
+            // show the missed packets
+            self.missed_packets_widget(ui);
         });
 
         let to_show = if self.all_graphs_show_all {
@@ -385,11 +398,21 @@ impl GroundStationGui {
             }
         });
     }
+
+    fn missed_packets_widget(&self, ui: &mut Ui) {
+        let color = match self.missed_packets {
+            0 => Color32::GREEN,
+            1..=10 => Color32::YELLOW,
+            11.. => Color32::RED,
+        };
+
+        ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+            ui.colored_label(color, self.missed_packets.to_string());
+            ui.label("Missed Packets: ");
+        });
+    }
 }
 
-// TODO: add view for controlling the radio
-// TODO: add view for all graphs
-// TODO: add changing the font size to the settings
 // TODO: add statistics view (e.g. number of dropped packets)
 // TODO: eventually use toasts for notifications https://github.com/ItsEthra/egui-notify
 //       this also looks pretty cool :) https://github.com/n00kii/egui-modal
@@ -447,7 +470,7 @@ impl eframe::App for GroundStationGui {
             egui::Window::new("commands")
                 .open(&mut open)
                 .show(ctx, |ui| self.command_center.show(ui));
-            self.show_radio_window = open;
+            self.show_command_window = open;
         }
 
         if self.show_radio_window {

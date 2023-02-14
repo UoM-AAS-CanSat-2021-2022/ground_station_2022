@@ -34,6 +34,7 @@ fn main() -> anyhow::Result<()> {
     let sat_dist = Uniform::new(8, 35);
     let tilt_dist = Uniform::new(-45.0, 45.0);
     let delay_dist = Uniform::new(0.5, 1.5);
+    // let delay_dist = Uniform::new(0.001, 0.01);
 
     // define the mutable state of the system
     let mut rng = thread_rng();
