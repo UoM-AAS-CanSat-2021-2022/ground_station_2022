@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
 
 use crate::app::commands::CommandPanel;
 use crate::as_str::AsStr;
@@ -64,6 +66,7 @@ pub struct GroundStationGui {
     /// What does the main view show?
     main_view: MainPanelView,
 
+    // ===== show windows? =====
     /// Show the settings window?
     show_settings_window: bool,
 
@@ -73,6 +76,26 @@ pub struct GroundStationGui {
     /// Show the radio window?
     show_radio_window: bool,
 
+    /// Show the simulation window?
+    show_sim_window: bool,
+
+    // ===== simulation mode values =====
+    /// The simulation pressure values
+    simp_values: Option<Vec<u32>>,
+
+    /// The graph values for each SIMP value
+    simp_graph_values: Option<Vec<PlotPoint>>,
+
+    /// The index of the current SIMP value
+    simp_index: Option<usize>,
+
+    // pause sending pressure values
+    simp_paused: bool,
+
+    // the instant the previous simp value was sent at
+    simp_last_sent: Option<Instant>,
+
+    // ===== command and radio data =====
     /// The command center
     command_center: CommandPanel,
 
@@ -191,6 +214,56 @@ impl GroundStationGui {
             }
         }
     }
+
+    fn load_sim_file(&mut self, path: PathBuf) -> anyhow::Result<()> {
+        // first read the lines of the file
+        let file_data = std::fs::read_to_string(path)?;
+        let lines: Vec<_> = file_data.split_ascii_whitespace().collect();
+
+        // allocate a vector with enough capacity to hold one pressure value for each line
+        let mut pressure_data: Vec<u32> = Vec::with_capacity(lines.len());
+
+        for line in lines {
+            // try to parse the line as u32, log the error if it failed
+            match line.trim().parse() {
+                Ok(pressure) => pressure_data.push(pressure),
+                Err(e) => tracing::warn!(
+                    "Failed to parse line as pressure value - line={:?} - {e:?}",
+                    line.trim()
+                ),
+            }
+        }
+
+        // call make contiguous so that all elements are in one slice
+        self.simp_values = Some(pressure_data);
+
+        const SEALEVEL_HPA: f64 = 1013.25;
+
+        // create the graph values
+        let plot_points: Vec<PlotPoint> = self
+            .simp_values
+            .as_ref()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(i, simp)| {
+                // Adapted from readAltitude
+                // Equation taken from BMP180 datasheet (page 16):
+                //  http://www.adafruit.com/datasheets/BST-BMP180-DS000-09.pdf
+
+                // Note that using the equation from wikipedia can give bad results
+                // at high altitude. See this thread for more information:
+                //  http://forums.adafruit.com/viewtopic.php?f=22&t=58064
+                let simp_hpa = (*simp as f64) / 100.0;
+                let alt = 44330.0 * (1.0 - (simp_hpa / SEALEVEL_HPA).powf(0.1903));
+                PlotPoint::new(i as f64, alt)
+            })
+            .collect();
+
+        self.simp_graph_values = Some(plot_points);
+
+        Ok(())
+    }
 }
 
 /// GUI components
@@ -206,6 +279,7 @@ impl GroundStationGui {
             .copied()
             .collect();
         let line = Line::new(PlotPoints::Owned(points)).name(field.as_str());
+        // TODO: add a CoordinatesFormatter here
         Plot::new(id_source).show(ui, |plot_ui| plot_ui.line(line));
     }
 
@@ -399,6 +473,27 @@ impl GroundStationGui {
         });
     }
 
+    fn sim_window(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Choose telemetry file: ");
+            if ui.button("Open file").clicked() {
+                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                    if let Err(e) = self.load_sim_file(path) {
+                        tracing::warn!("Failed to load sim file - {e:?}");
+                    }
+                }
+            }
+        });
+
+        // if we have pressure values display a little graph of them
+        if let Some(simps) = &self.simp_graph_values {
+            // map all the
+            Plot::new("simp_plot").show(ui, |ui| {
+                ui.line(Line::new(PlotPoints::Owned(simps.clone())));
+            });
+        }
+    }
+
     fn missed_packets_widget(&self, ui: &mut Ui) {
         let color = match self.missed_packets {
             0 => Color32::GREEN,
@@ -444,6 +539,7 @@ impl eframe::App for GroundStationGui {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.horizontal(|ui| {
                         // rightmost
+                        ui.checkbox(&mut self.show_sim_window, "🔁 Simulation");
                         ui.checkbox(&mut self.show_command_window, "🖧 Commands");
                         ui.checkbox(&mut self.show_radio_window, "📻 Radio");
                         ui.checkbox(&mut self.show_settings_window, "⚙ Settings");
@@ -479,6 +575,14 @@ impl eframe::App for GroundStationGui {
                 .open(&mut open)
                 .show(ctx, |ui| self.radio_window(ui));
             self.show_radio_window = open;
+        }
+
+        if self.show_sim_window {
+            open = true;
+            egui::Window::new("simulation mode")
+                .open(&mut open)
+                .show(ctx, |ui| self.sim_window(ui));
+            self.show_sim_window = open;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
