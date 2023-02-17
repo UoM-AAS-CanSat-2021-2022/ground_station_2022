@@ -42,7 +42,6 @@ const TELEMETRY_FILE: &'static str = "Flight_1047.csv";
 
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
-#[derive(Default)]
 pub struct GroundStationGui {
     /// The receiving end of the channel
     #[builder(setter(strip_option))]
@@ -58,11 +57,9 @@ pub struct GroundStationGui {
     missed_packets: u32,
 
     /// How many telemetry points does the one graph view show?
-    #[builder(default = "40")]
     one_graph_points: usize,
 
     /// How many telemetry points does the all graphs view show?
-    #[builder(default = "40")]
     all_graphs_points: usize,
 
     /// Show all the points in the one graph view?
@@ -102,7 +99,8 @@ pub struct GroundStationGui {
     command_center: CommandPanel,
 
     /// The channel over which to send and receive commands
-    cmd_channel: Option<(Sender<String>, Receiver<String>)>,
+    cmd_sender: Sender<String>,
+    cmd_receiver: Receiver<String>,
 
     /// A mapping from the time a command was state, to the command and it's status
     /// allows iterating in sent order due to BTreeMap's inherent ordering
@@ -112,11 +110,42 @@ pub struct GroundStationGui {
     radio_port: String,
 
     /// The radio's baud rate
-    #[builder(default = "230400")]
     radio_baud: u32,
 
     /// The XBee radio serial port connection
     radio: Option<Box<dyn SerialPort>>,
+}
+
+impl Default for GroundStationGui {
+    fn default() -> Self {
+        let (tx, rx) = channel();
+
+        Self {
+            rx: None,
+            telemetry: vec![],
+            graph_values: Default::default(),
+            missed_packets: 0,
+            one_graph_points: 40,
+            all_graphs_points: 40,
+            one_graph_shows_all: false,
+            all_graphs_show_all: false,
+            one_graph_shows: Default::default(),
+            main_view: Default::default(),
+            show_settings_window: false,
+            show_command_window: false,
+            show_radio_window: false,
+            show_sim_window: false,
+            simp_values: None,
+            simp_graph_values: None,
+            command_center: Default::default(),
+            cmd_sender: tx,
+            cmd_receiver: rx,
+            command_history: Default::default(),
+            radio_port: "".to_string(),
+            radio_baud: 230400,
+            radio: None,
+        }
+    }
 }
 
 // TODO: add a commands sent view
@@ -228,7 +257,7 @@ impl GroundStationGui {
     /// Handle reading commands from the channel and sending them down the radio
     fn handle_commands(&mut self) {
         // read any waiting commands into the command history, marking then unsent
-        while let Ok(cmd) = self.cmd_channel.as_ref().unwrap().1.try_recv() {
+        while let Ok(cmd) = self.cmd_receiver.try_recv() {
             self.command_history
                 .insert(Utc::now(), (cmd, CommandStatus::Unsent));
         }
@@ -616,11 +645,7 @@ impl GroundStationGui {
                     };
 
                     // make a clone of the Sender side of the command channel
-                    let cmd_sender = self
-                        .cmd_channel
-                        .as_ref()
-                        .map(|(sender, _)| sender.clone())
-                        .unwrap();
+                    let cmd_sender = self.cmd_sender.clone();
 
                     let thread_res =
                         thread::Builder::new()
@@ -699,23 +724,15 @@ impl GroundStationGui {
     }
 }
 
-// TODO: add statistics view (e.g. number of dropped packets)
-// TODO: eventually use toasts for notifications https://github.com/ItsEthra/egui-notify
-//       this also looks pretty cool :) https://github.com/n00kii/egui-modal
-// TODO: add the telemetry file to the settings
 // TODO: add clearing the current telemetry to the settings
 // TODO: add a status indicator for whether we are still connected to the telemetry sender
 // TODO: add a status window for replaying simulated pressure data (with pause + play?)
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // attempt to receive any telemetry thats availble from the radio
         self.recv_telem();
 
-        // if the command channel is closed, open a new one
-        if self.cmd_channel.is_none() {
-            self.cmd_channel = Some(channel());
-        }
-
-        // now handle the commands
+        // handle any command we have left to send
         self.handle_commands();
 
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
@@ -774,7 +791,7 @@ impl eframe::App for GroundStationGui {
             // send the command down the channel if there was one
             if let Some(cmd) = maybe_cmd {
                 // log any errors that occur
-                if let Err(e) = self.cmd_channel.as_ref().unwrap().0.send(cmd) {
+                if let Err(e) = self.cmd_sender.send(cmd) {
                     tracing::warn!("Failed to send command down channel - {e:?}");
                 }
             }
