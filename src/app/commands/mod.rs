@@ -12,10 +12,12 @@ use state::Target;
 use std::fmt::Display;
 use time::Time;
 
-use crate::app::commands::state::{ContainerState, PayloadState};
-use crate::as_str::AsStr;
-use crate::telemetry::GpsTime;
-use crate::TEAM_ID;
+use crate::{
+    app::commands::state::{ContainerState, PayloadState},
+    as_str::AsStr,
+    constants::TEAM_ID,
+    telemetry::GpsTime,
+};
 use enum_iterator::{all, Sequence};
 
 /// Holds all the state related to sending commands / the command UI
@@ -113,13 +115,7 @@ impl CommandPanel {
         }
     }
 
-    fn send_packet(&mut self) {
-        let cmd = self.build_cmd();
-        tracing::info!("Sending command: {cmd}");
-        // TODO: actually send the packet lol
-    }
-
-    pub fn show(&mut self, ui: &mut Ui) {
+    pub fn show(&mut self, ui: &mut Ui) -> Option<String> {
         Self::combobox_row(ui, &mut self.curr_command, "Command:", "command_combobox");
 
         match self.curr_command {
@@ -137,9 +133,11 @@ impl CommandPanel {
             ui.label(self.build_cmd());
             ui.separator();
             if ui.button("Send").clicked() {
-                self.send_packet();
+                return Some(self.build_cmd());
             }
-        });
+            None
+        })
+        .inner
     }
 
     fn set_time_view(&mut self, ui: &mut Ui) {

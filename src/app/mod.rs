@@ -3,16 +3,16 @@ mod graphable;
 
 use graphable::Graphable;
 
-use std::collections::HashMap;
-use std::fmt;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
-use std::time::Instant;
-
-use crate::app::commands::CommandPanel;
-use crate::as_str::AsStr;
+use crate::constants::BROADCAST_ADDR;
+use crate::xbee::XbeePacket;
+use crate::{
+    app::commands::CommandPanel,
+    as_str::AsStr,
+    constants::{SEALEVEL_HPA, TEAM_ID},
+    telemetry::{Telemetry, TelemetryField},
+    xbee::{TxRequest, BAUD_RATES},
+};
+use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use eframe::{egui, emath::Align};
 use egui::{
@@ -23,11 +23,22 @@ use egui::{
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
 use serialport::{SerialPort, SerialPortType};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, AtomicU32},
+        mpsc::{channel, Receiver, Sender},
+    },
+    thread,
+    time::Duration,
+};
 
-use crate::telemetry::{Telemetry, TelemetryField};
-use crate::xbee::BAUD_RATES;
-
-const TELEMETRY_FILE: &'static str = "telemetry.csv";
+const TELEMETRY_FILE: &'static str = "Flight_1047.csv";
 
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
@@ -86,18 +97,16 @@ pub struct GroundStationGui {
     /// The graph values for each SIMP value
     simp_graph_values: Option<Vec<PlotPoint>>,
 
-    /// The index of the current SIMP value
-    simp_index: Option<usize>,
-
-    // pause sending pressure values
-    simp_paused: bool,
-
-    // the instant the previous simp value was sent at
-    simp_last_sent: Option<Instant>,
-
     // ===== command and radio data =====
     /// The command center
     command_center: CommandPanel,
+
+    /// The channel over which to send and receive commands
+    cmd_channel: Option<(Sender<String>, Receiver<String>)>,
+
+    /// A mapping from the time a command was state, to the command and it's status
+    /// allows iterating in sent order due to BTreeMap's inherent ordering
+    command_history: BTreeMap<DateTime<Utc>, (String, CommandStatus)>,
 
     /// The radio's serial port name
     radio_port: String,
@@ -163,7 +172,7 @@ impl GroundStationGui {
         }
     }
 
-    // handles all the logic / state that must be kept in sync when adding telemetry
+    /// handles all the logic / state that must be kept in sync when adding telemetry
     fn add_telem(&mut self, telem: Telemetry) {
         // calculate how many packets we missed if any
         if let Some(prev) = self.telemetry.last() {
@@ -201,6 +210,7 @@ impl GroundStationGui {
         }
     }
 
+    /// Attempts to open a connection to the given radio
     fn open_radio_connection(&mut self) {
         // try to open the new radio
         match serialport::new(&self.radio_port, self.radio_baud).open() {
@@ -215,54 +225,98 @@ impl GroundStationGui {
         }
     }
 
+    /// Handle reading commands from the channel and sending them down the radio
+    fn handle_commands(&mut self) {
+        // read any waiting commands into the command history, marking then unsent
+        while let Ok(cmd) = self.cmd_channel.as_ref().unwrap().1.try_recv() {
+            self.command_history
+                .insert(Utc::now(), (cmd, CommandStatus::Unsent));
+        }
+
+        // wrapping counter for the frame IDs
+        static FRAME_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
+
+        if let Some(radio) = self.radio.as_mut() {
+            // attempt to send any unsent commands
+            for (_, (ref cmd, status)) in self.command_history.iter_mut() {
+                if *status != CommandStatus::Unsent {
+                    continue;
+                }
+
+                let req = TxRequest::new(BROADCAST_ADDR, cmd);
+                let Ok(mut packet): std::io::Result<XbeePacket> = req.try_into() else {
+                    tracing::error!("Failed to build a packet for cmd={cmd:?}");
+                    continue;
+                };
+                let frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+                packet.set_frame_id(frame_id);
+                match packet.serialise() {
+                    Ok(mut data) => {
+                        data.push(b'\n');
+                        if let Err(e) = radio.write(&data) {
+                            tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
+                        } else {
+                            tracing::info!("Sent command {cmd:?} with frame_id={frame_id:02X}");
+                            *status = CommandStatus::Sent { frame_id };
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failure serialising packet with data - {cmd:?} - {e:?}")
+                    }
+                }
+            }
+        }
+    }
+
     fn load_sim_file(&mut self, path: PathBuf) -> anyhow::Result<()> {
         // first read the lines of the file
         let file_data = std::fs::read_to_string(path)?;
         let lines: Vec<_> = file_data.split_ascii_whitespace().collect();
 
-        // allocate a vector with enough capacity to hold one pressure value for each line
+        // pre-allocate a vector with enough capacity to hold one pressure value for each line
         let mut pressure_data: Vec<u32> = Vec::with_capacity(lines.len());
 
         for line in lines {
             // try to parse the line as u32, log the error if it failed
-            match line.trim().parse() {
-                Ok(pressure) => pressure_data.push(pressure),
-                Err(e) => tracing::warn!(
-                    "Failed to parse line as pressure value - line={:?} - {e:?}",
-                    line.trim()
-                ),
+            let s = line.trim();
+            if let Ok(pressure) = s.parse::<u32>() {
+                pressure_data.push(pressure);
+            } else if let Ok(telem) = s.parse::<Telemetry>() {
+                pressure_data.push(Self::altitude_to_pressure(telem.altitude));
+            } else {
+                tracing::warn!("Failed to parse line as pressure value - line={s:?}")
             }
         }
 
-        // call make contiguous so that all elements are in one slice
-        self.simp_values = Some(pressure_data);
-
-        const SEALEVEL_HPA: f64 = 1013.25;
-
         // create the graph values
-        let plot_points: Vec<PlotPoint> = self
-            .simp_values
-            .as_ref()
-            .unwrap()
+        let plot_points: Vec<PlotPoint> = pressure_data
             .iter()
             .enumerate()
-            .map(|(i, simp)| {
-                // Adapted from readAltitude
-                // Equation taken from BMP180 datasheet (page 16):
-                //  http://www.adafruit.com/datasheets/BST-BMP180-DS000-09.pdf
-
-                // Note that using the equation from wikipedia can give bad results
-                // at high altitude. See this thread for more information:
-                //  http://forums.adafruit.com/viewtopic.php?f=22&t=58064
-                let simp_hpa = (*simp as f64) / 100.0;
-                let alt = 44330.0 * (1.0 - (simp_hpa / SEALEVEL_HPA).powf(0.1903));
-                PlotPoint::new(i as f64, alt)
-            })
+            .map(|(i, simp)| PlotPoint::new(i as f64, Self::pressure_to_altitude(*simp)))
             .collect();
 
-        self.simp_graph_values = Some(plot_points);
+        self.simp_values = Some(pressure_data);
 
+        self.simp_graph_values = Some(plot_points);
         Ok(())
+    }
+
+    fn pressure_to_altitude(pressure: u32) -> f64 {
+        // Adapted from readAltitude
+        // Equation taken from BMP180 datasheet (page 16):
+        //  http://www.adafruit.com/datasheets/BST-BMP180-DS000-09.pdf
+
+        // Note that using the equation from wikipedia can give bad results
+        // at high altitude. See this thread for more information:
+        //  http://forums.adafruit.com/viewtopic.php?f=22&t=58064
+        let simp_hpa = (pressure as f64) / 100.0;
+        44330.0 * (1.0 - (simp_hpa / SEALEVEL_HPA).powf(0.1903))
+    }
+
+    fn altitude_to_pressure(altitude: f64) -> u32 {
+        // inverted form of pressure_to_altitude
+        let presssure_hpa = SEALEVEL_HPA * (1.0 - altitude / 44330.0).powf(1.0 / 0.1903);
+        (presssure_hpa * 100.0) as u32
     }
 }
 
@@ -474,23 +528,160 @@ impl GroundStationGui {
     }
 
     fn sim_window(&mut self, ui: &mut Ui) {
+        ui.set_min_width(300.0);
+
         ui.horizontal(|ui| {
-            ui.label("Choose telemetry file: ");
-            if ui.button("Open file").clicked() {
-                if let Some(path) = rfd::FileDialog::new().pick_file() {
-                    if let Err(e) = self.load_sim_file(path) {
-                        tracing::warn!("Failed to load sim file - {e:?}");
+            ui.label("Choose file: ");
+            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                if ui.button("Open file").clicked() {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        if let Err(e) = self.load_sim_file(path) {
+                            tracing::warn!("Failed to load sim file - {e:?}");
+                        }
                     }
                 }
-            }
+            });
         });
+
+        // static atomic state for sharing with the sending thread
+        // have we started the sending thread? - prevent starting two threads
+        static SEND_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+        // have we paused sending the SIMP packets
+        static SEND_THREAD_PAUSED: AtomicBool = AtomicBool::new(false);
+        // are we cancelling the sending thread
+        static SEND_THREAD_CANCEL: AtomicBool = AtomicBool::new(false);
+        // how many pressure values have been sent?
+        static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
+
+        // always use the strongest ordering
+        const ORDER: std::sync::atomic::Ordering = std::sync::atomic::Ordering::SeqCst;
 
         // if we have pressure values display a little graph of them
         if let Some(simps) = &self.simp_graph_values {
-            // map all the
-            Plot::new("simp_plot").show(ui, |ui| {
-                ui.line(Line::new(PlotPoints::Owned(simps.clone())));
+            Plot::new("simp_plot").view_aspect(1.5).show(ui, |ui| {
+                let sent = SENT_SIMPS.load(ORDER) as usize;
+                let sent_simps = simps[..sent].to_vec();
+                let unsent_simps = simps[sent..].to_vec();
+                let sent_line = Line::new(PlotPoints::Owned(sent_simps)).color(Color32::GREEN);
+                let unsent_line = Line::new(PlotPoints::Owned(unsent_simps)).color(Color32::RED);
+                ui.line(sent_line);
+                ui.line(unsent_line);
             });
+
+            ui.separator();
+
+            // if the thread has been started add these buttons instead
+            if SEND_THREAD_STARTED.load(ORDER) {
+                ui.horizontal(|ui| {
+                    // pause / play button
+                    ui.with_layout(Layout::left_to_right(Align::TOP), |ui| {
+                        if SEND_THREAD_PAUSED.load(ORDER) {
+                            if ui.button("play").clicked() {
+                                tracing::info!("Playing simulation mode playback");
+                                SEND_THREAD_PAUSED.store(false, ORDER);
+                            }
+                        } else {
+                            if ui.button("pause").clicked() {
+                                tracing::info!("Pausing simulation mode playback");
+                                SEND_THREAD_PAUSED.store(true, ORDER);
+                            }
+                        }
+                    });
+
+                    // cancel button
+                    ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
+                        if ui.button("cancel").clicked() {
+                            tracing::info!("Cancelling simulation mode sender thread");
+                            SEND_THREAD_CANCEL.store(true, ORDER);
+                        }
+                    });
+                });
+            } else {
+                let button = ui
+                    .with_layout(Layout::top_down(Align::Center), |ui| {
+                        ui.button("Start sending")
+                    })
+                    .inner;
+
+                if button.clicked() {
+                    // set the thread as started
+                    SEND_THREAD_STARTED.store(true, ORDER);
+                    tracing::info!("Starting simulation mode sender thread");
+
+                    // make a copy of the simp data to send to the thread
+                    let Some(simp_data) = self.simp_values.clone() else {
+                        tracing::error!("Encountered invalid state - simp_graph_values is Some, but simp_values is None, resetting both to None.");
+                        self.simp_graph_values = None;
+                        return;
+                    };
+
+                    // make a clone of the Sender side of the command channel
+                    let cmd_sender = self
+                        .cmd_channel
+                        .as_ref()
+                        .map(|(sender, _)| sender.clone())
+                        .unwrap();
+
+                    let thread_res =
+                        thread::Builder::new()
+                            .name(String::from("simp"))
+                            .spawn(move || {
+                                tracing::info!("simp thread started");
+
+                                // send SIM,ENABLE then SIM,ACTIVATE
+                                cmd_sender
+                                    .send(String::from("CMD,1047,SIM,ENABLE"))
+                                    .expect("Failed to send SIM,ENABLE.");
+                                cmd_sender
+                                    .send(String::from("CMD,1047,SIM,ACTIVATE"))
+                                    .expect("Failed to send SIM,ACTIVATE.");
+
+                                // iterate through the commands, sleeping for one second before sending the next
+                                let mut simp_iter = simp_data.into_iter();
+                                loop {
+                                    // if SEND_THREAD_CANCEL is true, replace with false and cancel this thread
+                                    if let Ok(true) = SEND_THREAD_CANCEL
+                                        .compare_exchange(true, false, ORDER, ORDER)
+                                    {
+                                        tracing::info!("Cancelling simulation mode thread");
+                                        SEND_THREAD_PAUSED.store(false, ORDER);
+                                        SEND_THREAD_STARTED.store(false, ORDER);
+                                        SENT_SIMPS.store(0, ORDER);
+                                        return;
+                                    }
+
+                                    // wait until we are unpaused to send the command
+                                    if SEND_THREAD_PAUSED.load(ORDER) {
+                                        thread::sleep(Duration::from_millis(100));
+                                        continue;
+                                    }
+
+                                    if let Some(simp) = simp_iter.next() {
+                                        // send it!
+                                        let cmd = format!("CMD,{TEAM_ID},SIMP,{simp}");
+                                        if let Err(e) = cmd_sender.send(cmd) {
+                                            tracing::error!(
+                                                "Failed to send command over cmd_sender - {e:?}"
+                                            );
+                                        } else {
+                                            SENT_SIMPS.fetch_add(1, ORDER);
+                                            tracing::info!("SENT_SIMPS={SENT_SIMPS:?}");
+                                        }
+                                    } else {
+                                        // we have reached the end of the iterator, cancel the thread
+                                        return;
+                                    }
+
+                                    // sleep for a second
+                                    thread::sleep(Duration::from_secs(1));
+                                }
+                            });
+
+                    if let Err(e) = thread_res {
+                        tracing::error!("Failed to start SIMP command sender thread - {e:?}");
+                    }
+                }
+            }
         }
     }
 
@@ -518,6 +709,14 @@ impl GroundStationGui {
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.recv_telem();
+
+        // if the command channel is closed, open a new one
+        if self.cmd_channel.is_none() {
+            self.cmd_channel = Some(channel());
+        }
+
+        // now handle the commands
+        self.handle_commands();
 
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -563,9 +762,23 @@ impl eframe::App for GroundStationGui {
 
         if self.show_command_window {
             open = true;
-            egui::Window::new("commands")
+
+            // show the window and capture the response
+            let resp = egui::Window::new("commands")
                 .open(&mut open)
                 .show(ctx, |ui| self.command_center.show(ui));
+
+            // get the inner response and flatten the nested Options
+            let maybe_cmd = resp.map(|inner| inner.inner.flatten()).flatten();
+
+            // send the command down the channel if there was one
+            if let Some(cmd) = maybe_cmd {
+                // log any errors that occur
+                if let Err(e) = self.cmd_channel.as_ref().unwrap().0.send(cmd) {
+                    tracing::warn!("Failed to send command down channel - {e:?}");
+                }
+            }
+
             self.show_command_window = open;
         }
 
@@ -597,4 +810,15 @@ impl eframe::App for GroundStationGui {
         // we must request a repaint otherwise we do not receive any data
         ctx.request_repaint();
     }
+}
+
+// the different states a command can have
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum CommandStatus {
+    // used if the radio isn't connected
+    Unsent,
+    // sent but not acked
+    Sent { frame_id: u8 },
+    // sent and acked
+    Acked,
 }
