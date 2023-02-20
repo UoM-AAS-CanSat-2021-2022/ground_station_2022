@@ -25,7 +25,7 @@ fn main() -> Result<()> {
         let req = TxRequest::new(0xFFFF, format!("{telem}"));
         let mut packet: XbeePacket = req.try_into().unwrap();
         packet.set_frame_id(frame_id);
-        frame_id.wrapping_add(1);
+        frame_id = frame_id.wrapping_add(1);
         eprintln!("created packet: {packet:02X?}");
         let ser = packet.serialise()?;
         eprintln!("sending: {ser:02X?}");

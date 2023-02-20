@@ -3,14 +3,14 @@ mod graphable;
 
 use graphable::Graphable;
 
-use crate::constants::BROADCAST_ADDR;
+use crate::constants::{BAUD_RATES, BROADCAST_ADDR};
 use crate::xbee::XbeePacket;
 use crate::{
     app::commands::CommandPanel,
     as_str::AsStr,
     constants::{SEALEVEL_HPA, TEAM_ID},
     telemetry::{Telemetry, TelemetryField},
-    xbee::{TxRequest, BAUD_RATES},
+    xbee::TxRequest,
 };
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
@@ -21,6 +21,7 @@ use egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
+use parking_lot::FairMutex;
 use serialport::{SerialPort, SerialPortType};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -32,7 +33,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
         mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
+        Arc,
     },
     thread,
     time::Duration,
@@ -43,6 +44,16 @@ static CURR_RADIO: AtomicUsize = AtomicUsize::new(0);
 // use the strongest ordering for all atomic operations
 const ORDER: Ordering = Ordering::SeqCst;
 const TELEMETRY_FILE: &'static str = "Flight_1047.csv";
+
+// static atomic state for sharing with the sending thread
+// have we started the sending thread? - prevent starting two threads
+static SEND_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
+// have we paused sending the SIMP packets
+static SEND_THREAD_PAUSED: AtomicBool = AtomicBool::new(false);
+// are we cancelling the sending thread
+static SEND_THREAD_CANCEL: AtomicBool = AtomicBool::new(false);
+// how many pressure values have been sent?
+static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
@@ -117,7 +128,7 @@ pub struct GroundStationGui {
     radio_baud: u32,
 
     /// The XBee radio serial port connection
-    radio: Option<Arc<Mutex<Box<dyn SerialPort>>>>,
+    radio: Option<Arc<FairMutex<Box<dyn SerialPort>>>>,
 }
 
 impl Default for GroundStationGui {
@@ -254,12 +265,12 @@ impl GroundStationGui {
             Ok(port) => {
                 // set the timeout on the radio
                 let radio_num = CURR_RADIO.fetch_add(1, ORDER) + 1;
-                let radio = Arc::new(Mutex::new(port));
+                let radio = Arc::new(FairMutex::new(port));
                 self.radio = Some(radio.clone());
 
                 // start a new thread :D
                 if let Err(e) = thread::Builder::new()
-                    .name(format!("radio_reader_{radio_num}"))
+                    .name(format!("radio_{radio_num}"))
                     .spawn(move || Self::radio_thread(radio_num, radio))
                 {
                     tracing::error!("Failed to start radio reader thread - {e:?}");
@@ -272,19 +283,16 @@ impl GroundStationGui {
         }
     }
 
-    fn radio_thread(radio_num: usize, radio: Arc<Mutex<Box<dyn SerialPort>>>) {
+    fn radio_thread(radio_num: usize, radio_mutex: Arc<FairMutex<Box<dyn SerialPort>>>) {
         // allocate a buffer for receiving packets
         let mut buf = [0u8; 4096];
 
         // check we are the current radio - exiting cleanly if we aren't
         while radio_num == CURR_RADIO.load(ORDER) {
             // acquire a lock on the radio
-            let Ok(mut guard) = radio.lock() else {
-                tracing::error!("Radio lock poisoned - exiting the radio thread.");
-                return;
-            };
+            let mut radio = radio_mutex.lock();
 
-            let packet = match guard.read(&mut buf) {
+            let packet = match radio.read(&mut buf) {
                 Ok(bytes_read) => {
                     tracing::debug!(
                         "Read {bytes_read} bytes from the radio - {:?} - {:02X?}",
@@ -341,23 +349,7 @@ impl GroundStationGui {
         // wrapping counter for the frame IDs
         static FRAME_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
 
-        tracing::debug!("self.read.is_some() = {:?}", self.radio.is_some());
         let Some(radio_mutex) = self.radio.as_mut() else { return };
-        let mut radio = match radio_mutex.try_lock() {
-            Ok(guard) => {
-                tracing::info!("Got a handle for the mutex");
-                guard
-            }
-            Err(err) => {
-                if matches!(err, std::sync::TryLockError::Poisoned(_)) {
-                    tracing::error!("Critical failure, radio mutex is poisoned, please open a new connection to the radio.");
-                    return;
-                } else {
-                    // if it would block then just don't handle commands this time round
-                    return;
-                }
-            }
-        };
 
         // attempt to send any unsent commands
         for (_, (ref cmd, status)) in self.command_history.iter_mut() {
@@ -375,6 +367,7 @@ impl GroundStationGui {
             match packet.serialise() {
                 Ok(mut data) => {
                     data.push(b'\n');
+                    let mut radio = radio_mutex.lock();
                     if let Err(e) = radio.write(&data) {
                         tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
                     } else {
@@ -664,16 +657,6 @@ impl GroundStationGui {
             });
         });
 
-        // static atomic state for sharing with the sending thread
-        // have we started the sending thread? - prevent starting two threads
-        static SEND_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
-        // have we paused sending the SIMP packets
-        static SEND_THREAD_PAUSED: AtomicBool = AtomicBool::new(false);
-        // are we cancelling the sending thread
-        static SEND_THREAD_CANCEL: AtomicBool = AtomicBool::new(false);
-        // how many pressure values have been sent?
-        static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
-
         // if we have pressure values display a little graph of them
         if let Some(simps) = &self.simp_graph_values {
             Plot::new("simp_plot").view_aspect(1.5).show(ui, |ui| {
@@ -733,69 +716,64 @@ impl GroundStationGui {
                         return;
                     };
 
-                    // make a clone of the Sender side of the command channel
                     let cmd_sender = self.cmd_sender.clone();
-
-                    let thread_res =
-                        thread::Builder::new()
-                            .name(String::from("simp"))
-                            .spawn(move || {
-                                tracing::info!("simp thread started");
-
-                                // send SIM,ENABLE then SIM,ACTIVATE
-                                cmd_sender
-                                    .send(String::from("CMD,1047,SIM,ENABLE"))
-                                    .expect("Failed to send SIM,ENABLE.");
-                                cmd_sender
-                                    .send(String::from("CMD,1047,SIM,ACTIVATE"))
-                                    .expect("Failed to send SIM,ACTIVATE.");
-
-                                // iterate through the commands, sleeping for one second before sending the next
-                                let mut simp_iter = simp_data.into_iter();
-                                loop {
-                                    // if SEND_THREAD_CANCEL is true, replace with false and cancel this thread
-                                    if let Ok(true) = SEND_THREAD_CANCEL
-                                        .compare_exchange(true, false, ORDER, ORDER)
-                                    {
-                                        tracing::info!("Cancelling simulation mode thread");
-                                        SEND_THREAD_PAUSED.store(false, ORDER);
-                                        SEND_THREAD_STARTED.store(false, ORDER);
-                                        SENT_SIMPS.store(0, ORDER);
-                                        return;
-                                    }
-
-                                    // wait until we are unpaused to send the command
-                                    if SEND_THREAD_PAUSED.load(ORDER) {
-                                        thread::sleep(Duration::from_millis(100));
-                                        continue;
-                                    }
-
-                                    if let Some(simp) = simp_iter.next() {
-                                        // send it!
-                                        let cmd = format!("CMD,{TEAM_ID},SIMP,{simp}");
-                                        if let Err(e) = cmd_sender.send(cmd) {
-                                            tracing::error!(
-                                                "Failed to send command over cmd_sender - {e:?}"
-                                            );
-                                        } else {
-                                            SENT_SIMPS.fetch_add(1, ORDER);
-                                            tracing::info!("SENT_SIMPS={SENT_SIMPS:?}");
-                                        }
-                                    } else {
-                                        // we have reached the end of the iterator, cancel the thread
-                                        return;
-                                    }
-
-                                    // sleep for a second
-                                    thread::sleep(Duration::from_secs(1));
-                                }
-                            });
+                    let thread_res = thread::Builder::new()
+                        .name(String::from("simp"))
+                        .spawn(move || Self::simp_thread(cmd_sender, simp_data));
 
                     if let Err(e) = thread_res {
                         tracing::error!("Failed to start SIMP command sender thread - {e:?}");
                     }
                 }
             }
+        }
+    }
+
+    fn simp_thread(cmd_sender: Sender<String>, simp_data: Vec<u32>) {
+        tracing::info!("simp thread started");
+
+        // send SIM,ENABLE then SIM,ACTIVATE
+        cmd_sender
+            .send(String::from("CMD,1047,SIM,ENABLE"))
+            .expect("Failed to send SIM,ENABLE.");
+        cmd_sender
+            .send(String::from("CMD,1047,SIM,ACTIVATE"))
+            .expect("Failed to send SIM,ACTIVATE.");
+
+        // iterate through the commands, sleeping for one second before sending the next
+        let mut simp_iter = simp_data.into_iter();
+        loop {
+            // if SEND_THREAD_CANCEL is true, replace with false and cancel this thread
+            if let Ok(true) = SEND_THREAD_CANCEL.compare_exchange(true, false, ORDER, ORDER) {
+                tracing::info!("Cancelling simulation mode thread");
+                SEND_THREAD_PAUSED.store(false, ORDER);
+                SEND_THREAD_STARTED.store(false, ORDER);
+                SENT_SIMPS.store(0, ORDER);
+                return;
+            }
+
+            // wait until we are unpaused to send the command
+            if SEND_THREAD_PAUSED.load(ORDER) {
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
+
+            if let Some(simp) = simp_iter.next() {
+                // send it!
+                let cmd = format!("CMD,{TEAM_ID},SIMP,{simp}");
+                if let Err(e) = cmd_sender.send(cmd) {
+                    tracing::error!("Failed to send command over cmd_sender - {e:?}");
+                } else {
+                    SENT_SIMPS.fetch_add(1, ORDER);
+                    tracing::debug!("SENT_SIMPS={SENT_SIMPS:?}");
+                }
+            } else {
+                // we have reached the end of the iterator, cancel the thread
+                return;
+            }
+
+            // sleep for a second
+            thread::sleep(Duration::from_secs(1));
         }
     }
 

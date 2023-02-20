@@ -3,10 +3,13 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Result, Write};
 use std::num::Wrapping;
 
+mod rx_packet;
 mod tx_request;
-pub use tx_request::TxRequest;
+mod tx_status;
 
-pub const BAUD_RATES: [u32; 9] = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400];
+pub use rx_packet::RxPacket;
+pub use tx_request::TxRequest;
+pub use tx_status::TxStatus;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct XbeePacket {
@@ -102,6 +105,38 @@ impl XbeePacket {
             data,
         };
         Ok(packet)
+    }
+}
+
+/// returns whether the checksum for the given data was valid
+///
+/// data: [packet data] || checksum
+#[inline(always)]
+fn is_checksum_invalid(data: &[u8]) -> bool {
+    let csum = 0xFF
+        - data
+            .iter()
+            .take(data.len() - 1)
+            .copied()
+            .map(Wrapping)
+            .sum::<Wrapping<u8>>()
+            .0;
+    let check = *data.last().unwrap();
+
+    csum != check
+}
+
+#[derive(Debug)]
+pub enum ParsePacketError {
+    // indicates that the frame type was wrong
+    IncorrectFrameType,
+    // a wrapper around an internal IO error
+    IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for ParsePacketError {
+    fn from(err: std::io::Error) -> Self {
+        Self::IoError(err)
     }
 }
 
