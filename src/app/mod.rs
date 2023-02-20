@@ -16,28 +16,32 @@ use chrono::{DateTime, Utc};
 use derive_builder::Builder;
 use eframe::{egui, emath::Align};
 use egui::{
-    plot::{Line, Plot},
-    plot::{PlotPoint, PlotPoints},
+    plot::{Line, Plot, PlotPoint, PlotPoints},
     Color32, Grid, Layout, Ui,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
 use serialport::{SerialPort, SerialPortType};
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
     fs::OpenOptions,
-    io::Write,
+    io::{ErrorKind, Read, Write},
     path::PathBuf,
+    sync::atomic::AtomicUsize,
     sync::{
-        atomic::{AtomicBool, AtomicU32},
+        atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
         mpsc::{channel, Receiver, Sender},
+        Arc, Mutex,
     },
     thread,
     time::Duration,
 };
 
+static CURR_RADIO: AtomicUsize = AtomicUsize::new(0);
+
+// use the strongest ordering for all atomic operations
+const ORDER: Ordering = Ordering::SeqCst;
 const TELEMETRY_FILE: &'static str = "Flight_1047.csv";
 
 #[derive(Builder)]
@@ -113,7 +117,7 @@ pub struct GroundStationGui {
     radio_baud: u32,
 
     /// The XBee radio serial port connection
-    radio: Option<Box<dyn SerialPort>>,
+    radio: Option<Arc<Mutex<Box<dyn SerialPort>>>>,
 }
 
 impl Default for GroundStationGui {
@@ -241,16 +245,87 @@ impl GroundStationGui {
 
     /// Attempts to open a connection to the given radio
     fn open_radio_connection(&mut self) {
+        // use an atomic to specify the current thread number
+        // this means that we don't have to keep a handle to the thread
+        // we can simply increment this atomic and old threads will stop
+
         // try to open the new radio
         match serialport::new(&self.radio_port, self.radio_baud).open() {
             Ok(port) => {
-                self.radio = Some(port);
+                // set the timeout on the radio
+                let radio_num = CURR_RADIO.fetch_add(1, ORDER) + 1;
+                let radio = Arc::new(Mutex::new(port));
+                self.radio = Some(radio.clone());
+
+                // start a new thread :D
+                if let Err(e) = thread::Builder::new()
+                    .name(format!("radio_reader_{radio_num}"))
+                    .spawn(move || Self::radio_thread(radio_num, radio))
+                {
+                    tracing::error!("Failed to start radio reader thread - {e:?}");
+                }
                 tracing::info!("Successfully opened port.");
             }
             Err(e) => {
-                self.radio = None;
                 tracing::error!("Failed to open port - {e:?}");
             }
+        }
+    }
+
+    fn radio_thread(radio_num: usize, radio: Arc<Mutex<Box<dyn SerialPort>>>) {
+        // allocate a buffer for receiving packets
+        let mut buf = [0u8; 4096];
+
+        // check we are the current radio - exiting cleanly if we aren't
+        while radio_num == CURR_RADIO.load(ORDER) {
+            // acquire a lock on the radio
+            let Ok(mut guard) = radio.lock() else {
+                tracing::error!("Radio lock poisoned - exiting the radio thread.");
+                return;
+            };
+
+            let packet = match guard.read(&mut buf) {
+                Ok(bytes_read) => {
+                    tracing::debug!(
+                        "Read {bytes_read} bytes from the radio - {:?} - {:02X?}",
+                        String::from_utf8_lossy(&buf[..bytes_read]),
+                        &buf[..bytes_read]
+                    );
+                    &buf[..bytes_read]
+                }
+                Err(e) => {
+                    match e.kind() {
+                        // this kind of error happens when no data is there to be read
+                        // we can safely ignore this kind of error
+                        ErrorKind::TimedOut => {
+                            // sleep for a bit then continue
+                            thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                        ErrorKind::BrokenPipe => {
+                            tracing::info!("Radio disconnected - stopping receiver thread");
+                            return;
+                        }
+                        _ => {
+                            tracing::warn!("Received unrecognised error while reading from radio - {e:?} - stopping receiver thread");
+                            return;
+                        }
+                    }
+                }
+            };
+
+            // attempt to parse the data as a packet
+            match XbeePacket::decode(packet) {
+                Ok(xb_packet) => {
+                    tracing::info!("Received packet - {xb_packet:02X?}");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to decode the radio data as an XBeePacket - {e:?}")
+                }
+            }
+
+            // we want to check the radio very often so only sleep for a millisecond
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -258,6 +333,7 @@ impl GroundStationGui {
     fn handle_commands(&mut self) {
         // read any waiting commands into the command history, marking then unsent
         while let Ok(cmd) = self.cmd_receiver.try_recv() {
+            tracing::debug!("Received command from channel - cmd={cmd:?}");
             self.command_history
                 .insert(Utc::now(), (cmd, CommandStatus::Unsent));
         }
@@ -265,33 +341,49 @@ impl GroundStationGui {
         // wrapping counter for the frame IDs
         static FRAME_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
 
-        if let Some(radio) = self.radio.as_mut() {
-            // attempt to send any unsent commands
-            for (_, (ref cmd, status)) in self.command_history.iter_mut() {
-                if *status != CommandStatus::Unsent {
-                    continue;
+        tracing::debug!("self.read.is_some() = {:?}", self.radio.is_some());
+        let Some(radio_mutex) = self.radio.as_mut() else { return };
+        let mut radio = match radio_mutex.try_lock() {
+            Ok(guard) => {
+                tracing::info!("Got a handle for the mutex");
+                guard
+            }
+            Err(err) => {
+                if matches!(err, std::sync::TryLockError::Poisoned(_)) {
+                    tracing::error!("Critical failure, radio mutex is poisoned, please open a new connection to the radio.");
+                    return;
+                } else {
+                    // if it would block then just don't handle commands this time round
+                    return;
                 }
+            }
+        };
 
-                let req = TxRequest::new(BROADCAST_ADDR, cmd);
-                let Ok(mut packet): std::io::Result<XbeePacket> = req.try_into() else {
+        // attempt to send any unsent commands
+        for (_, (ref cmd, status)) in self.command_history.iter_mut() {
+            if *status != CommandStatus::Unsent {
+                continue;
+            }
+
+            let req = TxRequest::new(BROADCAST_ADDR, cmd);
+            let Ok(mut packet): std::io::Result<XbeePacket> = req.try_into() else {
                     tracing::error!("Failed to build a packet for cmd={cmd:?}");
                     continue;
                 };
-                let frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-                packet.set_frame_id(frame_id);
-                match packet.serialise() {
-                    Ok(mut data) => {
-                        data.push(b'\n');
-                        if let Err(e) = radio.write(&data) {
-                            tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
-                        } else {
-                            tracing::info!("Sent command {cmd:?} with frame_id={frame_id:02X}");
-                            *status = CommandStatus::Sent { frame_id };
-                        }
+            let frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            packet.set_frame_id(frame_id);
+            match packet.serialise() {
+                Ok(mut data) => {
+                    data.push(b'\n');
+                    if let Err(e) = radio.write(&data) {
+                        tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
+                    } else {
+                        tracing::info!("Sent command {cmd:?} with frame_id={frame_id:02X}");
+                        *status = CommandStatus::Sent { frame_id };
                     }
-                    Err(e) => {
-                        tracing::error!("Failure serialising packet with data - {cmd:?} - {e:?}")
-                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failure serialising packet with data - {cmd:?} - {e:?}")
                 }
             }
         }
@@ -582,9 +674,6 @@ impl GroundStationGui {
         // how many pressure values have been sent?
         static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
 
-        // always use the strongest ordering
-        const ORDER: std::sync::atomic::Ordering = std::sync::atomic::Ordering::SeqCst;
-
         // if we have pressure values display a little graph of them
         if let Some(simps) = &self.simp_graph_values {
             Plot::new("simp_plot").view_aspect(1.5).show(ui, |ui| {
@@ -725,8 +814,6 @@ impl GroundStationGui {
 }
 
 // TODO: add clearing the current telemetry to the settings
-// TODO: add a status indicator for whether we are still connected to the telemetry sender
-// TODO: add a status window for replaying simulated pressure data (with pause + play?)
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
@@ -737,7 +824,7 @@ impl eframe::App for GroundStationGui {
 
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("🚀 Manchester CanSat Project");
+                ui.label("Manchester CanSat Project 🚀");
                 ui.separator();
 
                 egui::global_dark_light_mode_switch(ui);
@@ -790,6 +877,7 @@ impl eframe::App for GroundStationGui {
 
             // send the command down the channel if there was one
             if let Some(cmd) = maybe_cmd {
+                tracing::debug!("Sending cmd={cmd:?} over channel");
                 // log any errors that occur
                 if let Err(e) = self.cmd_sender.send(cmd) {
                     tracing::warn!("Failed to send command down channel - {e:?}");

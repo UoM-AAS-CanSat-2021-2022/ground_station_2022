@@ -27,29 +27,40 @@ fn main() -> Result<()> {
         .init();
 
     // create a channel for communicating between the reader thread and the main thread
-    let (tx, rx) = channel();
+    let arg = args().nth(1).unwrap_or_else(|| String::from("radio"));
 
-    if args().nth(1) == Some(String::from("listen")) {
-        // allow listening from the
-        let mut listener = TelemetryListener::new(tx.clone());
-        let _handle: JoinHandle<Result<()>> = thread::Builder::new()
-            .name("listener".to_string())
-            .spawn(move || listener.run())?;
-    } else {
-        // default to just repeating the data from the file
-        let mut reader = TelemetryReader::new(tx.clone());
-        let _handle: JoinHandle<Result<()>> = thread::Builder::new()
-            .name("reader".to_string())
-            .spawn(move || reader.run())?;
-    }
+    let my_app = match arg.as_str() {
+        "reader" => {
+            // read the telementry from a file
+            let (tx, rx) = channel();
+            let mut reader = TelemetryReader::new(tx.clone());
+            let _handle: JoinHandle<Result<()>> = thread::Builder::new()
+                .name("reader".to_string())
+                .spawn(move || reader.run())?;
+            GroundStationGuiBuilder::default().rx(rx).build()?
+        }
+        "listener" => {
+            // listen on a port for telemetry
+            let (tx, rx) = channel();
+            let mut listener = TelemetryListener::new(tx.clone());
+            let _handle: JoinHandle<Result<()>> = thread::Builder::new()
+                .name("listener".to_string())
+                .spawn(move || listener.run())?;
+            GroundStationGuiBuilder::default().rx(rx).build()?
+        }
+        _ => {
+            if arg != "radio" {
+                tracing::warn!("Unrecognised first argument - {arg:?} - starting in radio mode.");
+            }
+
+            GroundStationGui::default()
+        }
+    };
 
     // run GUI
-    let options = eframe::NativeOptions::default();
-    let my_app: GroundStationGui = GroundStationGuiBuilder::default().rx(rx).build()?;
-
     eframe::run_native(
         "MCP Ground Station",
-        options,
+        Default::default(),
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             Box::new(my_app)

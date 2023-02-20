@@ -1,4 +1,4 @@
-use anyhow::ensure;
+use anyhow::{bail, ensure};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Result, Write};
 use std::num::Wrapping;
@@ -67,7 +67,17 @@ impl XbeePacket {
 
         ensure!(cur.read_u8()? == 0x7E, "Invalid packet start byte");
 
-        let len = cur.read_u16::<BigEndian>()?;
+        let mut len = cur.read_u16::<BigEndian>()?;
+        // this is some weird fucking edge case :(
+        if len == 0x7D {
+            // MATE I DON'T FUCKING KNOW THIS SHIT IS BS
+            let next = cur.read_u8()?;
+            if next == 0x31 {
+                len = 0x11;
+            } else {
+                bail!("Attempted to fix edge case for length of 0x11, found invalid next - next={next:?}");
+            }
+        }
 
         let frame_type = cur.read_u8()?;
         checksum -= frame_type;
