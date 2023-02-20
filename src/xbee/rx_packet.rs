@@ -1,8 +1,7 @@
 use crate::xbee::ParsePacketError::IncorrectFrameType;
-use crate::xbee::{checksum, is_checksum_invalid, ParsePacketError, XbeePacket};
+use crate::xbee::{is_checksum_invalid, ParsePacketError, XbeePacket};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
-use std::num::Wrapping;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RxPacket {
