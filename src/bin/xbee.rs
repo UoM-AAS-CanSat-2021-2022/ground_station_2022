@@ -22,10 +22,9 @@ fn main() -> Result<()> {
 
     let mut frame_id = 0;
     for telem in telemetry {
-        let req = TxRequest::new(0xFFFF, format!("{telem}"));
-        let mut packet: XbeePacket = req.try_into().unwrap();
-        packet.set_frame_id(frame_id);
+        let req = TxRequest::new(frame_id, 0xFFFF, format!("{telem}"));
         frame_id = frame_id.wrapping_add(1);
+        let packet: XbeePacket = req.try_into().unwrap();
         eprintln!("created packet: {packet:02X?}");
         let ser = packet.serialise()?;
         eprintln!("sending: {ser:02X?}");

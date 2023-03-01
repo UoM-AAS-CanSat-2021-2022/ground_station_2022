@@ -143,7 +143,6 @@ mod tests {
     fn test_rx_packet_parse() {
         let xbp = XbeePacket {
             frame_type: 0x89,
-            frame_id: 1,
             data: hex!("00 75").to_vec(),
         };
 
@@ -156,7 +155,6 @@ mod tests {
     fn test_rx_packet_parse_fails_invalid_frame_type() {
         let xbp = XbeePacket {
             frame_type: 0x90,
-            frame_id: 1,
             data: hex!("00 75").to_vec(),
         };
 

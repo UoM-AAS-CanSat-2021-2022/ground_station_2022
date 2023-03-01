@@ -5,10 +5,10 @@ use std::io::Cursor;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RxPacket {
-    src_addr: u16,
-    rssi: u8,
-    options: u8,
-    data: Vec<u8>,
+    pub src_addr: u16,
+    pub rssi: u8,
+    pub options: u8,
+    pub data: Vec<u8>,
 }
 
 impl TryFrom<XbeePacket> for RxPacket {
@@ -57,7 +57,6 @@ mod tests {
     fn test_rx_packet_parse() {
         let xbp = XbeePacket {
             frame_type: 0x81,
-            frame_id: 0,
             data: hex!("FF FE 00 01 41 42 43 44 76").to_vec(),
         };
 
@@ -78,7 +77,6 @@ mod tests {
     fn test_rx_packet_parse_fails_invalid_frame_type() {
         let xbp = XbeePacket {
             frame_type: 0x82,
-            frame_id: 0,
             data: hex!("FF FE 00 01 41 42 43 44 76").to_vec(),
         };
 

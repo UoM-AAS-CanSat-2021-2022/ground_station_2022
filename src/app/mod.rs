@@ -1,7 +1,9 @@
 mod commands;
 mod graphable;
+mod received_packet;
 
 use graphable::Graphable;
+use received_packet::ReceivedPacket;
 
 use crate::constants::{BAUD_RATES, BROADCAST_ADDR};
 use crate::xbee::XbeePacket;
@@ -263,7 +265,6 @@ impl GroundStationGui {
         // try to open the new radio
         match serialport::new(&self.radio_port, self.radio_baud).open() {
             Ok(port) => {
-                // set the timeout on the radio
                 let radio_num = CURR_RADIO.fetch_add(1, ORDER) + 1;
                 let radio = Arc::new(FairMutex::new(port));
                 self.radio = Some(radio.clone());
@@ -322,19 +323,20 @@ impl GroundStationGui {
                 }
             };
 
-            // attempt to parse the data as a packet
-            match XbeePacket::decode(packet) {
-                Ok(xb_packet) => {
-                    tracing::info!("Received packet - {xb_packet:02X?}");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to decode the radio data as an XBeePacket - {e:?}")
-                }
-            }
+            // parse the data in the received packet
+            let received: ReceivedPacket = packet.into();
+            tracing::info!("Received: {received:02X?}");
 
             // we want to check the radio very often so only sleep for a millisecond
             thread::sleep(Duration::from_millis(1));
         }
+    }
+
+    /// Close the current radio
+    fn close_radio(&mut self) {
+        self.radio = None;
+        tracing::debug!("Closed connection - CURR_RADIO={}", CURR_RADIO.load(ORDER));
+        CURR_RADIO.fetch_add(1, ORDER);
     }
 
     /// Handle reading commands from the channel and sending them down the radio
@@ -357,13 +359,12 @@ impl GroundStationGui {
                 continue;
             }
 
-            let req = TxRequest::new(BROADCAST_ADDR, cmd);
-            let Ok(mut packet): std::io::Result<XbeePacket> = req.try_into() else {
-                    tracing::error!("Failed to build a packet for cmd={cmd:?}");
-                    continue;
-                };
             let frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-            packet.set_frame_id(frame_id);
+            let req = TxRequest::new(frame_id, BROADCAST_ADDR, cmd);
+            let Ok(packet): std::io::Result<XbeePacket> = req.try_into() else {
+                tracing::error!("Failed to build a packet for cmd={cmd:?}");
+                continue;
+            };
             match packet.serialise() {
                 Ok(mut data) => {
                     data.push(b'\n');
@@ -575,12 +576,12 @@ impl GroundStationGui {
             ui.label("Serial port: ");
             ui.vertical_centered(|ui| {
                 let Ok(ports) = serialport::available_ports() else {
-                        ui.label("Failed to get availble ports.");
-                        return;
-                    };
+                    ui.label("Failed to get availble ports.");
+                    return;
+                };
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    egui::ComboBox::from_id_source("radio_baud_combobox")
+                    egui::ComboBox::from_id_source("radio_port_combobox")
                         .selected_text(&self.radio_port)
                         .show_ui(ui, |ui| {
                             for port in ports {
@@ -593,6 +594,7 @@ impl GroundStationGui {
 
                                     if value.changed() {
                                         tracing::info!("Set radio port to {:?}", port.port_name);
+                                        self.close_radio();
                                     }
                                 }
                             }
@@ -605,7 +607,7 @@ impl GroundStationGui {
             ui.label("Baud rate: ");
             ui.vertical_centered(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    egui::ComboBox::from_id_source("radio_port_combobox")
+                    egui::ComboBox::from_id_source("radio_baud_combobox")
                         .selected_text(self.radio_baud.to_string())
                         .show_ui(ui, |ui| {
                             for baud in BAUD_RATES {
@@ -617,6 +619,12 @@ impl GroundStationGui {
 
                                 if value.changed() {
                                     tracing::info!("Set radio baud to {baud}");
+                                    if let Some(radio) = &self.radio {
+                                        let mut guard = radio.lock();
+                                        if let Err(e) = guard.set_baud_rate(self.radio_baud) {
+                                            tracing::warn!("Encountered error setting baud rate on radio - {e:?}")
+                                        }
+                                    }
                                 }
                             }
                         });
@@ -625,8 +633,15 @@ impl GroundStationGui {
         });
 
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            if ui.button("Open port").clicked() {
-                self.open_radio_connection();
+            // if we don't have a radio show an open button
+            if self.radio.is_none() {
+                if ui.button("Open port").clicked() {
+                    self.open_radio_connection();
+                }
+            } else {
+                if ui.button("Disconnect").clicked() {
+                    self.close_radio();
+                }
             }
         });
 
