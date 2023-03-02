@@ -37,7 +37,7 @@ fn main() -> Result<()> {
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("reader".to_string())
                 .spawn(move || reader.run())?;
-            GroundStationGuiBuilder::default().rx(rx).build()?
+            GroundStationGuiBuilder::default().packet_rx(rx).build()?
         }
         "listener" => {
             // listen on a port for telemetry
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("listener".to_string())
                 .spawn(move || listener.run())?;
-            GroundStationGuiBuilder::default().rx(rx).build()?
+            GroundStationGuiBuilder::default().packet_rx(rx).build()?
         }
         _ => {
             if arg != "radio" {

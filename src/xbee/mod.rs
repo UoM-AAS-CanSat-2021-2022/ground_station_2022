@@ -73,7 +73,7 @@ impl XbeePacket {
         checksum -= frame_type;
 
         let mut data = vec![];
-        for _ in 2..len {
+        for _ in 0..len - 1 {
             let byte = cur.read_u8()?;
             data.push(byte);
             checksum -= byte;
@@ -81,7 +81,6 @@ impl XbeePacket {
 
         // check the checksum
         let sent_checksum = cur.read_u8()?;
-        dbg!(sent_checksum, checksum);
         ensure!(checksum.0 == sent_checksum, "Packet checksum didn't match");
 
         let packet = XbeePacket {
@@ -91,24 +90,6 @@ impl XbeePacket {
         };
         Ok(packet)
     }
-}
-
-/// returns whether the checksum for the given data was valid
-///
-/// data: [packet data] || checksum
-#[inline(always)]
-fn is_checksum_invalid(data: &[u8]) -> bool {
-    let csum = 0xFF
-        - data
-            .iter()
-            .take(data.len() - 1)
-            .copied()
-            .map(Wrapping)
-            .sum::<Wrapping<u8>>()
-            .0;
-    let check = *data.last().unwrap();
-
-    csum != check
 }
 
 #[derive(Debug)]

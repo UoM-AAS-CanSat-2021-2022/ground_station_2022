@@ -1,6 +1,6 @@
 use crate::as_str::AsStr;
 use crate::xbee::ParsePacketError::IncorrectFrameType;
-use crate::xbee::{is_checksum_invalid, ParsePacketError, XbeePacket};
+use crate::xbee::{ParsePacketError, XbeePacket};
 use enum_primitive_derive::Primitive;
 use num_traits::FromPrimitive;
 use std::fmt;
@@ -126,10 +126,6 @@ impl TryFrom<XbeePacket> for TxStatus {
 
         let status = TxStatus::from_u8(data[0]).unwrap_or(TxStatus::UNKNOWN);
 
-        if is_checksum_invalid(data) {
-            tracing::warn!("Invalid checksum on TxStatus packet")
-        }
-
         Ok(status)
     }
 }
@@ -144,6 +140,7 @@ mod tests {
         let xbp = XbeePacket {
             frame_type: 0x89,
             data: hex!("00 75").to_vec(),
+            checksum: 1,
         };
 
         let packet = TxStatus::try_from(xbp).unwrap();
@@ -156,6 +153,7 @@ mod tests {
         let xbp = XbeePacket {
             frame_type: 0x90,
             data: hex!("00 75").to_vec(),
+            checksum: 1,
         };
 
         let _packet = TxStatus::try_from(xbp).unwrap_err();

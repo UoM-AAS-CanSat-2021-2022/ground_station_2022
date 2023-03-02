@@ -2,17 +2,17 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::sync::mpsc::Sender;
 
-use crate::telemetry::Telemetry;
-
+use crate::app::ReceivedPacket;
+use crate::xbee::{RxPacket, XbeePacket};
 use anyhow::{bail, Result};
 
 /// Telem
 pub struct TelemetryListener {
-    tx: Sender<Telemetry>,
+    tx: Sender<ReceivedPacket>,
 }
 
 impl TelemetryListener {
-    pub fn new(tx: Sender<Telemetry>) -> Self {
+    pub fn new(tx: Sender<ReceivedPacket>) -> Self {
         Self { tx }
     }
 
@@ -35,7 +35,21 @@ impl TelemetryListener {
 
             match line.parse() {
                 Ok(telem) => {
-                    if let Err(e) = self.tx.send(telem) {
+                    let packet = ReceivedPacket::Telemetry {
+                        packet: XbeePacket {
+                            frame_type: 0x81,
+                            data: vec![],
+                            checksum: 0,
+                        },
+                        frame: RxPacket {
+                            src_addr: 0xFFFF,
+                            rssi: 0,
+                            options: 0,
+                            data: vec![],
+                        },
+                        telem,
+                    };
+                    if let Err(e) = self.tx.send(packet) {
                         tracing::warn!(
                             "Encountered error sending telemtry over the channel: {e:?}"
                         );

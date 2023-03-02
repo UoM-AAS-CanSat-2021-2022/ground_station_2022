@@ -1,9 +1,9 @@
 mod commands;
 mod graphable;
 mod received_packet;
+pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
-use received_packet::ReceivedPacket;
 
 use crate::constants::{BAUD_RATES, BROADCAST_ADDR};
 use crate::xbee::XbeePacket;
@@ -60,10 +60,6 @@ static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
 #[derive(Builder)]
 #[builder(pattern = "owned", default)]
 pub struct GroundStationGui {
-    /// The receiving end of the channel
-    #[builder(setter(strip_option))]
-    rx: Option<Receiver<Telemetry>>,
-
     /// The collected telemetry from the current run
     telemetry: Vec<Telemetry>,
 
@@ -131,6 +127,13 @@ pub struct GroundStationGui {
 
     /// The XBee radio serial port connection
     radio: Option<Arc<FairMutex<Box<dyn SerialPort>>>>,
+
+    /// The channel down which to receive packets
+    #[builder(setter(strip_option))]
+    packet_rx: Option<Receiver<ReceivedPacket>>,
+
+    /// The received packets from the radio
+    packet_log: Vec<ReceivedPacket>,
 }
 
 impl Default for GroundStationGui {
@@ -138,7 +141,6 @@ impl Default for GroundStationGui {
         let (tx, rx) = channel();
 
         Self {
-            rx: None,
             telemetry: vec![],
             graph_values: Default::default(),
             missed_packets: 0,
@@ -161,6 +163,8 @@ impl Default for GroundStationGui {
             radio_port: "".to_string(),
             radio_baud: 230400,
             radio: None,
+            packet_rx: None,
+            packet_log: vec![],
         }
     }
 }
@@ -195,11 +199,16 @@ impl GroundStationGui {
     /// Receive any telemetry that is waiting on the incoming channel
     fn recv_telem(&mut self) {
         // take ownership of the receiver so we can mutate self
-        if let Some(rx) = self.rx.take() {
+        if let Some(rx) = self.packet_rx.take() {
             // receive anything sent down the channel
             loop {
                 match rx.try_recv() {
-                    Ok(telem) => self.add_telem(telem),
+                    Ok(packet) => {
+                        self.packet_log.push(packet.clone());
+                        if let ReceivedPacket::Telemetry { telem, .. } = packet {
+                            self.add_telem(telem);
+                        }
+                    }
 
                     // don't replace the reader if the receiver is disconnected
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -210,7 +219,7 @@ impl GroundStationGui {
                     // if the receiver has no more telemetry then give
                     // ownership of the receiver back to self
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        self.rx = Some(rx);
+                        self.packet_rx = Some(rx);
                         break;
                     }
                 }
@@ -267,12 +276,14 @@ impl GroundStationGui {
             Ok(port) => {
                 let radio_num = CURR_RADIO.fetch_add(1, ORDER) + 1;
                 let radio = Arc::new(FairMutex::new(port));
+                let (tx, rx) = channel();
                 self.radio = Some(radio.clone());
+                self.packet_rx = Some(rx);
 
                 // start a new thread :D
                 if let Err(e) = thread::Builder::new()
                     .name(format!("radio_{radio_num}"))
-                    .spawn(move || Self::radio_thread(radio_num, radio))
+                    .spawn(move || Self::radio_thread(radio_num, radio, tx))
                 {
                     tracing::error!("Failed to start radio reader thread - {e:?}");
                 }
@@ -284,23 +295,43 @@ impl GroundStationGui {
         }
     }
 
-    fn radio_thread(radio_num: usize, radio_mutex: Arc<FairMutex<Box<dyn SerialPort>>>) {
+    fn radio_thread(
+        radio_num: usize,
+        radio_mutex: Arc<FairMutex<Box<dyn SerialPort>>>,
+        packet_tx: Sender<ReceivedPacket>,
+    ) {
         // allocate a buffer for receiving packets
         let mut buf = [0u8; 4096];
+        let mut write_idx = 0;
 
         // check we are the current radio - exiting cleanly if we aren't
         while radio_num == CURR_RADIO.load(ORDER) {
             // acquire a lock on the radio
             let mut radio = radio_mutex.lock();
 
-            let packet = match radio.read(&mut buf) {
+            match radio.read(&mut buf[write_idx..]) {
                 Ok(bytes_read) => {
                     tracing::debug!(
                         "Read {bytes_read} bytes from the radio - {:?} - {:02X?}",
                         String::from_utf8_lossy(&buf[..bytes_read]),
-                        &buf[..bytes_read]
+                        &buf[write_idx..write_idx + bytes_read]
                     );
-                    &buf[..bytes_read]
+
+                    // save the newly received data to the radio log
+                    let save_data_res = OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open("radio_data.raw")
+                        .map(|mut f| f.write_all(&buf[write_idx..write_idx + bytes_read]))
+                        .flatten();
+
+                    // log any errors
+                    if let Err(e) = save_data_res {
+                        tracing::info!("Failed to save radio data to 'radio_data.raw' - {e:?}");
+                    }
+
+                    // bump the write index
+                    write_idx += bytes_read;
                 }
                 Err(e) => {
                     match e.kind() {
@@ -323,9 +354,70 @@ impl GroundStationGui {
                 }
             };
 
-            // parse the data in the received packet
-            let received: ReceivedPacket = packet.into();
-            tracing::info!("Received: {received:02X?}");
+            // find packets in the sent data by looking for the start byte
+            let candidates = buf[..write_idx]
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, b)| (*b == 0x7E).then_some(idx));
+
+            let mut shift = 0;
+            for start in candidates {
+                tracing::info!("start = {start}, shift = {shift}");
+
+                let potential_packet = &buf[start - shift..write_idx - shift];
+                let received: ReceivedPacket = potential_packet.into();
+
+                match &received {
+                    ReceivedPacket::Telemetry { packet, .. }
+                    | ReceivedPacket::Received { packet, .. }
+                    | ReceivedPacket::Status { packet, .. }
+                    | ReceivedPacket::InvalidFrame(packet)
+                    | ReceivedPacket::Unrecognised(packet) => {
+                        // as good as we're going to get from this one, so send it over
+                        tracing::info!("Received: {received:02X?}");
+
+                        // if this fails then this thread should die
+                        if let Err(e) = packet_tx.send(received) {
+                            tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
+                            return;
+                        }
+
+                        // if shift is zero and start is not zero then we have garbage before this
+                        // in the buffer and should output ReceivedPacket::Invalid for that data
+                        if shift == 0 && start != 0 {
+                            let invalid = ReceivedPacket::Invalid(buf[..start].to_vec());
+
+                            if let Err(e) = packet_tx.send(invalid) {
+                                tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
+                                return;
+                            }
+                        }
+
+                        // now update shift
+                        // packet_len = data_len + 1 (checksum) +
+                        let packet_len = packet.data.len() + 2;
+                        if shift == 0 {
+                            shift = start + packet_len;
+                        } else {
+                            shift += packet_len;
+                        }
+                    }
+                    // parse failed so try again later
+                    ReceivedPacket::Invalid(_) => {}
+                }
+                // attempt to parse later on in case some data hasn't arrived yet
+                // if let ReceivedPacket::Invalid(_) = &received {
+                // } else {
+                //     // as good as we're going to get from this one, so send it over
+                //     tracing::info!("Received: {received:02X?}");
+
+                //     // if this fails then this thread should die
+                //     if let Err(e) = packet_tx.send(received) {
+                //         tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
+                //         return;
+                //     }
+                // }
+            }
 
             // we want to check the radio very often so only sleep for a millisecond
             thread::sleep(Duration::from_millis(1));
@@ -337,6 +429,14 @@ impl GroundStationGui {
         self.radio = None;
         tracing::debug!("Closed connection - CURR_RADIO={}", CURR_RADIO.load(ORDER));
         CURR_RADIO.fetch_add(1, ORDER);
+
+        // receive any packets remaining
+        while let Some(packet) = self.packet_rx.and_then(|rx| rx.try_recv().ok()) {
+            self.packet_log.push(packet.clone());
+            if let ReceivedPacket::Telemetry { telem, .. } = packet {
+                self.add_telem(telem);
+            }
+        }
     }
 
     /// Handle reading commands from the channel and sending them down the radio

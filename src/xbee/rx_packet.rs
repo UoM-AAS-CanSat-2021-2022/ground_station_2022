@@ -1,5 +1,5 @@
 use crate::xbee::ParsePacketError::IncorrectFrameType;
-use crate::xbee::{is_checksum_invalid, ParsePacketError, XbeePacket};
+use crate::xbee::{ParsePacketError, XbeePacket};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -33,11 +33,6 @@ impl TryFrom<XbeePacket> for RxPacket {
         let pos = cur.position() as usize;
         let inner_data = data[pos..data.len() - 1].to_vec();
 
-        // log a warning that the checksum was invalid but still receive the data
-        if is_checksum_invalid(data) {
-            tracing::warn!("Invalid checksum on Rx packet");
-        }
-
         Ok(RxPacket {
             src_addr,
             rssi,
@@ -58,6 +53,7 @@ mod tests {
         let xbp = XbeePacket {
             frame_type: 0x81,
             data: hex!("FF FE 00 01 41 42 43 44 76").to_vec(),
+            checksum: 1,
         };
 
         let packet = RxPacket::try_from(xbp).unwrap();
@@ -78,6 +74,7 @@ mod tests {
         let xbp = XbeePacket {
             frame_type: 0x82,
             data: hex!("FF FE 00 01 41 42 43 44 76").to_vec(),
+            checksum: 1,
         };
 
         let _packet = RxPacket::try_from(xbp).unwrap_err();

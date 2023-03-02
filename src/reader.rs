@@ -4,17 +4,17 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
-use crate::telemetry::Telemetry;
-
+use crate::app::ReceivedPacket;
+use crate::xbee::{RxPacket, XbeePacket};
 use anyhow::Result;
 
 /// Telem
 pub struct TelemetryReader {
-    tx: Sender<Telemetry>,
+    tx: Sender<ReceivedPacket>,
 }
 
 impl TelemetryReader {
-    pub fn new(tx: Sender<Telemetry>) -> Self {
+    pub fn new(tx: Sender<ReceivedPacket>) -> Self {
         Self { tx }
     }
 
@@ -38,7 +38,21 @@ impl TelemetryReader {
 
             match line.parse() {
                 Ok(telem) => {
-                    if let Err(e) = self.tx.send(telem) {
+                    let packet = ReceivedPacket::Telemetry {
+                        packet: XbeePacket {
+                            frame_type: 0x81,
+                            data: vec![],
+                            checksum: 0,
+                        },
+                        frame: RxPacket {
+                            src_addr: 0xFFFF,
+                            rssi: 0,
+                            options: 0,
+                            data: vec![],
+                        },
+                        telem,
+                    };
+                    if let Err(e) = self.tx.send(packet) {
                         tracing::warn!(
                             "Encountered error sending telemtry over the channel: {e:?}"
                         );

@@ -6,3 +6,4 @@ Cargo.lock
 !/test_data/test_2022.csv
 *.png
 *.log
+radio_data.raw
