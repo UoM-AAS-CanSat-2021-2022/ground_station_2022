@@ -1118,9 +1118,8 @@ pub enum Packet {
 impl Packet {
     // show the packet in the given UI
     fn show(&self, ui: &mut Ui) {
-        // TODO: make this like actually pretty,,,
-        const SENT_COLOR: Color32 = Color32::LIGHT_YELLOW;
-        const RECV_COLOR: Color32 = Color32::LIGHT_BLUE;
+        const SENT_COLOR: Color32 = Color32::from_rgb(20, 182, 51);
+        const RECV_COLOR: Color32 = Color32::from_rgb(173, 0, 252);
 
         match self {
             Packet::Sent(req) => {
