@@ -170,7 +170,6 @@ impl Default for GroundStationGui {
 }
 
 // TODO: add a commands sent view
-// TODO: add a packets view
 #[derive(Sequence, Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum MainPanelView {
     #[default]
@@ -994,6 +993,7 @@ impl GroundStationGui {
 }
 
 // TODO: add radio / similar status indicators to the top bar
+// TODO: make the simulation mode disable itself upon pausing etc
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
