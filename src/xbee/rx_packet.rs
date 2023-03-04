@@ -1,6 +1,7 @@
 use crate::xbee::ParsePacketError::IncorrectFrameType;
 use crate::xbee::{ParsePacketError, XbeePacket};
 use byteorder::{BigEndian, ReadBytesExt};
+use core::fmt;
 use std::io::Cursor;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -31,7 +32,7 @@ impl TryFrom<XbeePacket> for RxPacket {
         let rssi = cur.read_u8()?;
         let options = cur.read_u8()?;
         let pos = cur.position() as usize;
-        let inner_data = data[pos..data.len() - 1].to_vec();
+        let inner_data = data[pos..data.len()].to_vec();
 
         Ok(RxPacket {
             src_addr,
@@ -39,6 +40,20 @@ impl TryFrom<XbeePacket> for RxPacket {
             options,
             data: inner_data,
         })
+    }
+}
+
+impl fmt::Display for RxPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "RxPacket {{ src: {:02X}:{:02X}, rssi: -{}dBm, options: {:02}, data: {:?} }}",
+            self.src_addr >> 8,
+            self.src_addr & 0xFF,
+            self.rssi,
+            self.options,
+            String::from_utf8_lossy(self.data.as_slice()),
+        )
     }
 }
 

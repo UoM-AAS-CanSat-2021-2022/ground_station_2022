@@ -1,5 +1,6 @@
 use crate::telemetry::Telemetry;
 use crate::xbee::{RxPacket, TxStatus, XbeePacket};
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum ReceivedPacket {
@@ -105,6 +106,35 @@ impl From<&[u8]> for ReceivedPacket {
                     packet: xbp,
                     frame: received_data,
                 }
+            }
+        }
+    }
+}
+
+impl fmt::Display for ReceivedPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReceivedPacket::Telemetry { telem, .. } => {
+                write!(f, "Telemetry - {telem}")
+            }
+            ReceivedPacket::Received { frame, .. } => {
+                write!(f, "{frame}")
+            }
+            ReceivedPacket::Status { tx_status, .. } => {
+                write!(f, "{tx_status}")
+            }
+            ReceivedPacket::InvalidFrame(xbp) => {
+                write!(f, "Invalid RxFrame - {xbp}")
+            }
+            ReceivedPacket::Unrecognised(xbp) => {
+                write!(f, "Unrecognised frame type - {xbp}")
+            }
+            ReceivedPacket::Invalid(data) => {
+                write!(
+                    f,
+                    "Invalid Data - {data:02X?} - {:?}",
+                    String::from_utf8_lossy(data)
+                )
             }
         }
     }

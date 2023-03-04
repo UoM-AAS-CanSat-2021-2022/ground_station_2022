@@ -1,5 +1,6 @@
 use anyhow::{bail, ensure};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::fmt;
 use std::io::{Cursor, Result, Write};
 use std::num::Wrapping;
 
@@ -9,7 +10,7 @@ mod tx_status;
 
 pub use rx_packet::RxPacket;
 pub use tx_request::TxRequest;
-pub use tx_status::TxStatus;
+pub use tx_status::{DeliveryStatus, TxStatus};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct XbeePacket {
@@ -20,7 +21,8 @@ pub struct XbeePacket {
 
 impl XbeePacket {
     pub(crate) fn new(frame_type: u8, data: Vec<u8>) -> Self {
-        let checksum = 0xFF - frame_type - data.iter().fold(0u8, |acc, x| acc.wrapping_add(*x));
+        let checksum =
+            (0xFF - frame_type).wrapping_sub(data.iter().fold(0u8, |acc, x| acc.wrapping_add(*x)));
         Self {
             frame_type,
             data,
@@ -103,6 +105,18 @@ pub enum ParsePacketError {
 impl From<std::io::Error> for ParsePacketError {
     fn from(err: std::io::Error) -> Self {
         Self::IoError(err)
+    }
+}
+
+impl fmt::Display for XbeePacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "XbeePacket {{ frame_type: {:02X}, data: {:?}, checksum: {:02X} }}",
+            self.frame_type,
+            String::from_utf8_lossy(self.data.as_slice()),
+            self.checksum
+        )
     }
 }
 

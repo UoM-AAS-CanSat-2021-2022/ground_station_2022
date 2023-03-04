@@ -1,14 +1,16 @@
 use crate::xbee::XbeePacket;
 use byteorder::{BigEndian, WriteBytesExt};
+use std::fmt;
 use std::io::Write;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TxRequest {
     /// The frame ID
-    frame_id: u8,
+    pub frame_id: u8,
     /// The destination address
-    dst: u16,
+    pub dst: u16,
     /// The data to send
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl TxRequest {
@@ -40,6 +42,19 @@ impl TryFrom<TxRequest> for XbeePacket {
         buf.write(&req.data)?;
 
         Ok(XbeePacket::new(0x01, buf))
+    }
+}
+
+impl fmt::Display for TxRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TxRequest {{ frame_id: {}, dst: {:02X}:{:02X}, data: {:?} }}",
+            self.frame_id,
+            self.dst >> 8,
+            self.dst & 0xFF,
+            String::from_utf8_lossy(self.data.as_slice())
+        )
     }
 }
 

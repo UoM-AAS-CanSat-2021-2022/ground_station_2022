@@ -133,7 +133,7 @@ pub struct GroundStationGui {
     packet_rx: Option<Receiver<ReceivedPacket>>,
 
     /// The received packets from the radio
-    packet_log: Vec<ReceivedPacket>,
+    packet_log: Vec<Packet>,
 }
 
 impl Default for GroundStationGui {
@@ -177,6 +177,7 @@ pub enum MainPanelView {
     AllGraphs,
     OneGraph,
     Table,
+    Packets,
 }
 
 impl AsStr for MainPanelView {
@@ -185,6 +186,7 @@ impl AsStr for MainPanelView {
             MainPanelView::OneGraph => "One Graph",
             MainPanelView::AllGraphs => "All Graphs",
             MainPanelView::Table => "Data Table",
+            MainPanelView::Packets => "Packets",
         }
     }
 }
@@ -204,9 +206,16 @@ impl GroundStationGui {
             loop {
                 match rx.try_recv() {
                     Ok(packet) => {
-                        self.packet_log.push(packet.clone());
-                        if let ReceivedPacket::Telemetry { telem, .. } = packet {
-                            self.add_telem(telem);
+                        self.packet_log.push(Packet::Received(packet.clone()));
+                        if let ReceivedPacket::Telemetry { telem, .. } = &packet {
+                            self.add_telem(telem.clone());
+                        } else {
+                            for telem in Self::recover_telemetry(&packet) {
+                                tracing::info!(
+                                    "Recovered some telemetry from an invalid packet - {telem}"
+                                );
+                                self.add_telem(telem);
+                            }
                         }
                     }
 
@@ -231,13 +240,12 @@ impl GroundStationGui {
     fn add_telem(&mut self, telem: Telemetry) {
         // calculate how many packets we missed if any
         if let Some(prev) = self.telemetry.last() {
-            self.missed_packets += telem.packet_count - 1 - prev.packet_count;
+            self.missed_packets += telem.packet_count.saturating_sub(1 + prev.packet_count);
         }
 
         tracing::debug!("{:?}", telem);
         self.telemetry.push(telem.clone());
 
-        // save the telemetry to the graph points
         let time = telem.mission_time.as_seconds();
         for field in all::<Graphable>() {
             self.graph_values
@@ -263,6 +271,33 @@ impl GroundStationGui {
         if let Err(e) = result {
             tracing::warn!("Encountered error while writing to file: {e}");
         }
+    }
+
+    /// Sometimes invalid packets contain data that we can actually salvage
+    fn recover_telemetry(packet: &ReceivedPacket) -> Vec<Telemetry> {
+        let ReceivedPacket::Invalid(data) = packet else {
+            return vec![];
+        };
+
+        // extract all the ASCII substrings of this data
+        let mut ascii_substrings = vec![String::new()];
+        for byte in data {
+            if byte.is_ascii() {
+                // if we hit ascii data just add it to the last string
+                ascii_substrings.last_mut().unwrap().push(*byte as char);
+            } else {
+                // if we don't then add an empty String if the last one isn't empty
+                if !ascii_substrings.last().unwrap().is_empty() {
+                    ascii_substrings.push(String::new());
+                }
+            }
+        }
+
+        // collect any substrings which parse as telemetry
+        ascii_substrings
+            .into_iter()
+            .filter_map(|s| s.parse().ok())
+            .collect()
     }
 
     /// Attempts to open a connection to the given radio
@@ -295,6 +330,8 @@ impl GroundStationGui {
         }
     }
 
+    // this thread handles receiving data from the radio and sending
+    // received packets back to the main thread
     fn radio_thread(
         radio_num: usize,
         radio_mutex: Arc<FairMutex<Box<dyn SerialPort>>>,
@@ -303,6 +340,16 @@ impl GroundStationGui {
         // allocate a buffer for receiving packets
         let mut buf = [0u8; 4096];
         let mut write_idx = 0;
+
+        // open the radio data log in append mode
+        let mut log_file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open("radio_data.raw");
+
+        if let Err(e) = log_file.as_ref() {
+            tracing::warn!("Failed to open radio data log, radio data will not be saved. - {e:?}");
+        }
 
         // check we are the current radio - exiting cleanly if we aren't
         while radio_num == CURR_RADIO.load(ORDER) {
@@ -317,22 +364,20 @@ impl GroundStationGui {
                         &buf[write_idx..write_idx + bytes_read]
                     );
 
-                    // save the newly received data to the radio log
-                    let save_data_res = OpenOptions::new()
-                        .append(true)
-                        .create(true)
-                        .open("radio_data.raw")
-                        .map(|mut f| f.write_all(&buf[write_idx..write_idx + bytes_read]))
-                        .flatten();
+                    // save any data we receive to a file
+                    if let Ok(file) = log_file.as_mut() {
+                        let save_data_res = file.write_all(&buf[write_idx..write_idx + bytes_read]);
 
-                    // log any errors
-                    if let Err(e) = save_data_res {
-                        tracing::info!("Failed to save radio data to 'radio_data.raw' - {e:?}");
+                        // log any errors
+                        if let Err(e) = save_data_res {
+                            tracing::info!("Failed to save radio data to 'radio_data.raw' - {e:?}");
+                        }
                     }
 
                     // bump the write index
                     write_idx += bytes_read;
                 }
+
                 Err(e) => {
                     match e.kind() {
                         // this kind of error happens when no data is there to be read
@@ -360,11 +405,12 @@ impl GroundStationGui {
                 .enumerate()
                 .filter_map(|(idx, b)| (*b == 0x7E).then_some(idx));
 
-            let mut shift = 0;
+            // keep track of where we have parsed upto
+            let mut parsed_upto = 0;
             for start in candidates {
-                tracing::info!("start = {start}, shift = {shift}");
+                tracing::debug!("start = {start}, parsed_upto = {parsed_upto}");
 
-                let potential_packet = &buf[start - shift..write_idx - shift];
+                let potential_packet = &buf[start..write_idx];
                 let received: ReceivedPacket = potential_packet.into();
 
                 match &received {
@@ -376,51 +422,58 @@ impl GroundStationGui {
                         // as good as we're going to get from this one, so send it over
                         tracing::info!("Received: {received:02X?}");
 
+                        // if our start is further than `parsed_upto` then output
+                        // whatever came before as an invalid packet.
+                        if start != parsed_upto {
+                            // we don't really care if this fails
+                            let _ = packet_tx
+                                .send(ReceivedPacket::Invalid(buf[parsed_upto..start].to_vec()));
+                        }
+
+                        // calculate the packet length while we still borrow the packet
+                        let packet_len = packet.data.len() + 5;
+
                         // if this fails then this thread should die
                         if let Err(e) = packet_tx.send(received) {
                             tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
                             return;
                         }
 
-                        // if shift is zero and start is not zero then we have garbage before this
-                        // in the buffer and should output ReceivedPacket::Invalid for that data
-                        if shift == 0 && start != 0 {
-                            let invalid = ReceivedPacket::Invalid(buf[..start].to_vec());
-
-                            if let Err(e) = packet_tx.send(invalid) {
-                                tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
-                                return;
-                            }
-                        }
-
-                        // now update shift
-                        // packet_len = data_len + 1 (checksum) +
-                        let packet_len = packet.data.len() + 2;
-                        if shift == 0 {
-                            shift = start + packet_len;
-                        } else {
-                            shift += packet_len;
-                        }
+                        // now update parsed_upto
+                        // packet_len = data_len + 1 (checksum) + 1 (frame type) + 2 (length) + 1 (start byte)
+                        parsed_upto = start + packet_len;
                     }
                     // parse failed so try again later
                     ReceivedPacket::Invalid(_) => {}
                 }
-                // attempt to parse later on in case some data hasn't arrived yet
-                // if let ReceivedPacket::Invalid(_) = &received {
-                // } else {
-                //     // as good as we're going to get from this one, so send it over
-                //     tracing::info!("Received: {received:02X?}");
+            }
 
-                //     // if this fails then this thread should die
-                //     if let Err(e) = packet_tx.send(received) {
-                //         tracing::error!("Encountered error sending packet over channel - {e:?} - ending radio thread.");
-                //         return;
-                //     }
-                // }
+            // if we are at the end of the buffer then attempt to find the start byte of the
+            // last packet sent and make that the new start of the buffer
+            if write_idx == buf.len() {
+                // only search in the last 256 bytes because that is the maximum size of a packet
+                match buf[buf.len() - 256..].iter().rposition(|x| *x == 0x7E) {
+                    // simply set parsed_upto and let the later code handle the buffer logic
+                    Some(back_pos) => parsed_upto = back_pos,
+                    None => parsed_upto = write_idx,
+                }
+            }
+
+            // if we have parsed any data then move unparsed data to the start
+            if parsed_upto > 0 {
+                buf.copy_within(parsed_upto..write_idx, 0);
+                write_idx -= parsed_upto;
             }
 
             // we want to check the radio very often so only sleep for a millisecond
             thread::sleep(Duration::from_millis(1));
+        }
+
+        // if the write index is not zero, output whatever is in the buffer as Invalid([..]) before exiting
+        if write_idx != 0 {
+            packet_tx
+                .send(ReceivedPacket::Invalid(buf[..write_idx].to_vec()))
+                .ok();
         }
     }
 
@@ -431,10 +484,15 @@ impl GroundStationGui {
         CURR_RADIO.fetch_add(1, ORDER);
 
         // receive any packets remaining
-        while let Some(packet) = self.packet_rx.and_then(|rx| rx.try_recv().ok()) {
-            self.packet_log.push(packet.clone());
+        while let Some(packet) = self.packet_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            self.packet_log.push(Packet::Received(packet.clone()));
             if let ReceivedPacket::Telemetry { telem, .. } = packet {
                 self.add_telem(telem);
+            } else {
+                for telem in Self::recover_telemetry(&packet) {
+                    tracing::info!("Recovered some telemetry from an invalid packet - {telem}");
+                    self.add_telem(telem);
+                }
             }
         }
     }
@@ -449,7 +507,7 @@ impl GroundStationGui {
         }
 
         // wrapping counter for the frame IDs
-        static FRAME_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
+        static FRAME_ID_COUNTER: AtomicU8 = AtomicU8::new(1);
 
         let Some(radio_mutex) = self.radio.as_mut() else { return };
 
@@ -459,21 +517,25 @@ impl GroundStationGui {
                 continue;
             }
 
-            let frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let mut frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            // frame ID == 0 means no ack :(
+            while frame_id == 0 {
+                frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+            }
             let req = TxRequest::new(frame_id, BROADCAST_ADDR, cmd);
-            let Ok(packet): std::io::Result<XbeePacket> = req.try_into() else {
+            let Ok(packet): std::io::Result<XbeePacket> = req.clone().try_into() else {
                 tracing::error!("Failed to build a packet for cmd={cmd:?}");
                 continue;
             };
-            match packet.serialise() {
-                Ok(mut data) => {
-                    data.push(b'\n');
+            match packet.clone().serialise() {
+                Ok(data) => {
                     let mut radio = radio_mutex.lock();
                     if let Err(e) = radio.write(&data) {
                         tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
                     } else {
                         tracing::info!("Sent command {cmd:?} with frame_id={frame_id:02X}");
                         *status = CommandStatus::Sent { frame_id };
+                        self.packet_log.push(Packet::Sent(req));
                     }
                 }
                 Err(e) => {
@@ -666,6 +728,31 @@ impl GroundStationGui {
                                     ui.label(telem.get_field(field));
                                 });
                             }
+                        });
+                    });
+            });
+    }
+
+    fn packets_view(&mut self, ui: &mut Ui) {
+        const ROW_HEIGHT: f32 = 18.0;
+
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .max_height(f32::INFINITY)
+            .show(ui, |ui| {
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .max_scroll_height(f32::INFINITY)
+                    .column(Column::remainder())
+                    .body(|body| {
+                        body.rows(ROW_HEIGHT, self.packet_log.len(), |row_index, mut row| {
+                            row.col(|ui| {
+                                ui.horizontal(|ui| {
+                                    self.packet_log[row_index].show(ui);
+                                });
+                            });
                         });
                     });
             });
@@ -906,7 +993,7 @@ impl GroundStationGui {
     }
 }
 
-// TODO: add clearing the current telemetry to the settings
+// TODO: add radio / similar status indicators to the top bar
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
@@ -1002,6 +1089,7 @@ impl eframe::App for GroundStationGui {
                 MainPanelView::OneGraph => self.one_graph_view(ui),
                 MainPanelView::AllGraphs => self.all_graphs_view(ui),
                 MainPanelView::Table => self.data_table_view(ui),
+                MainPanelView::Packets => self.packets_view(ui),
             }
         });
 
@@ -1019,4 +1107,28 @@ pub enum CommandStatus {
     Sent { frame_id: u8 },
     // sent and acked
     Acked,
+}
+
+// the packets used to store in the packet log
+pub enum Packet {
+    Sent(TxRequest),
+    Received(ReceivedPacket),
+}
+
+impl Packet {
+    // show the packet in the given UI
+    fn show(&self, ui: &mut Ui) {
+        // TODO: make this like actually pretty,,,
+        const SENT_COLOR: Color32 = Color32::LIGHT_YELLOW;
+        const RECV_COLOR: Color32 = Color32::LIGHT_BLUE;
+
+        match self {
+            Packet::Sent(req) => {
+                ui.colored_label(SENT_COLOR, format!("{req}"));
+            }
+            Packet::Received(packet) => {
+                ui.colored_label(RECV_COLOR, format!("{packet}"));
+            }
+        }
+    }
 }

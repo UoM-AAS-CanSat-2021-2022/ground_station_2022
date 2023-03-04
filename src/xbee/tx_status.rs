@@ -6,8 +6,8 @@ use num_traits::FromPrimitive;
 use std::fmt;
 
 // definitely don't need most of these but I thought I might as well implement them
-#[derive(Debug, Clone, Eq, PartialEq, Primitive)]
-pub enum TxStatus {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Primitive)]
+pub enum DeliveryStatus {
     Success = 0x00,
     NoAck = 0x01,
     CcaFailure = 0x02,
@@ -53,7 +53,13 @@ pub enum TxStatus {
     UNKNOWN = 0xFF,
 }
 
-impl AsStr for TxStatus {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct TxStatus {
+    pub frame_id: u8,
+    pub status: DeliveryStatus,
+}
+
+impl AsStr for DeliveryStatus {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Success => "Success",
@@ -103,7 +109,7 @@ impl AsStr for TxStatus {
     }
 }
 
-impl fmt::Display for TxStatus {
+impl fmt::Display for DeliveryStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -124,35 +130,52 @@ impl TryFrom<XbeePacket> for TxStatus {
             return Err(IncorrectFrameType);
         }
 
-        let status = TxStatus::from_u8(data[0]).unwrap_or(TxStatus::UNKNOWN);
+        let frame_id = data[0];
+        let status = DeliveryStatus::from_u8(data[1]).unwrap_or(DeliveryStatus::UNKNOWN);
 
-        Ok(status)
+        Ok(TxStatus { frame_id, status })
+    }
+}
+
+impl fmt::Display for TxStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TxStatus {{ frame_id: {}, status: {} }}",
+            self.frame_id, self.status
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::xbee::{TxStatus, XbeePacket};
+    use super::*;
     use hex_literal::hex;
 
     #[test]
     fn test_rx_packet_parse() {
         let xbp = XbeePacket {
             frame_type: 0x89,
-            data: hex!("00 75").to_vec(),
+            data: hex!("01 00 75").to_vec(),
             checksum: 1,
         };
 
         let packet = TxStatus::try_from(xbp).unwrap();
 
-        assert_eq!(packet, TxStatus::Success,)
+        assert_eq!(
+            packet,
+            TxStatus {
+                frame_id: 1,
+                status: DeliveryStatus::Success
+            }
+        );
     }
 
     #[test]
     fn test_rx_packet_parse_fails_invalid_frame_type() {
         let xbp = XbeePacket {
             frame_type: 0x90,
-            data: hex!("00 75").to_vec(),
+            data: hex!("01 00 75").to_vec(),
             checksum: 1,
         };
 
