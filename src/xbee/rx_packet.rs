@@ -67,7 +67,7 @@ mod tests {
     fn test_rx_packet_parse() {
         let xbp = XbeePacket {
             frame_type: 0x81,
-            data: hex!("FF FE 00 01 41 42 43 44 76").to_vec(),
+            data: hex!("FF FE 00 01 41 42 43 44").to_vec(),
             checksum: 1,
         };
 

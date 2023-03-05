@@ -44,7 +44,7 @@ impl XbeePacket {
         buf.write_u8(self.frame_type)?;
 
         // packet data
-        buf.write(&self.data)?;
+        buf.write_all(&self.data)?;
 
         // checksum
         buf.write_u8(self.checksum)?;

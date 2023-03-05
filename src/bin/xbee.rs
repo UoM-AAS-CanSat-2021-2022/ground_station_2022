@@ -2,15 +2,13 @@ use anyhow::Result;
 use chrono::{Timelike, Utc};
 use ground_station::telemetry::Telemetry;
 use ground_station::telemetry::*;
-use ground_station::xbee::{RxPacket, TxRequest, XbeePacket};
+use ground_station::xbee::{TxRequest, XbeePacket};
 use rand::{
     distributions::{Open01, Slice, Uniform},
     prelude::*,
 };
-use std::io::ErrorKind;
 use std::{
     io::{self, Write},
-    net::TcpStream,
     thread,
     time::Duration,
 };
@@ -98,14 +96,13 @@ fn main() -> Result<()> {
             let req = TxRequest::new(frame_id, 0xFFFF, format!("{telem}"));
             let packet: XbeePacket = req.try_into().unwrap();
             let ser = packet.serialise()?;
-            sport.write(&ser)?;
+            sport.write_all(&ser)?;
         }
 
+        frame_id += 1;
         packet_count += 1;
 
         // wait to send the next packet
         thread::sleep(Duration::from_secs_f32(rng.sample(delay_dist)));
     }
-
-    Ok(())
 }

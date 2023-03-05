@@ -39,7 +39,7 @@ impl TryFrom<TxRequest> for XbeePacket {
         buf.write_u8(0)?;
 
         // data
-        buf.write(&req.data)?;
+        buf.write_all(&req.data)?;
 
         Ok(XbeePacket::new(0x01, buf))
     }

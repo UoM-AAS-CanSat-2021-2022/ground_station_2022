@@ -90,6 +90,7 @@ pub struct Telemetry {
 
 impl Telemetry {
     #[rustfmt::skip]
+    #[allow(clippy::useless_format)]
     pub fn get_field(&self, field: TelemetryField) -> String {
         match field {
             TelemetryField::TeamId       => format!("{}", self.team_id),

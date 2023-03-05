@@ -1,5 +1,6 @@
 /// our TEAM ID
 pub const TEAM_ID: u16 = 1047;
+pub const TEAM_ID_STR: &str = "1047";
 
 /// Sea level pressure in HPA
 pub const SEALEVEL_HPA: f64 = 1013.25;

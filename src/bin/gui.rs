@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         "reader" => {
             // read the telementry from a file
             let (tx, rx) = channel();
-            let mut reader = TelemetryReader::new(tx.clone());
+            let mut reader = TelemetryReader::new(tx);
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("reader".to_string())
                 .spawn(move || reader.run())?;
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
         "listener" => {
             // listen on a port for telemetry
             let (tx, rx) = channel();
-            let mut listener = TelemetryListener::new(tx.clone());
+            let mut listener = TelemetryListener::new(tx);
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("listener".to_string())
                 .spawn(move || listener.run())?;

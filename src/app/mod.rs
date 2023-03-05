@@ -5,14 +5,13 @@ pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
 
-use crate::constants::{BAUD_RATES, BROADCAST_ADDR};
-use crate::xbee::XbeePacket;
+use crate::xbee::TxStatus;
 use crate::{
     app::commands::CommandPanel,
     as_str::AsStr,
-    constants::{SEALEVEL_HPA, TEAM_ID},
+    constants::{BAUD_RATES, BROADCAST_ADDR, SEALEVEL_HPA, TEAM_ID, TEAM_ID_STR},
     telemetry::{Telemetry, TelemetryField},
-    xbee::TxRequest,
+    xbee::{DeliveryStatus, TxRequest, XbeePacket},
 };
 use chrono::{DateTime, Utc};
 use derive_builder::Builder;
@@ -45,7 +44,7 @@ static CURR_RADIO: AtomicUsize = AtomicUsize::new(0);
 
 // use the strongest ordering for all atomic operations
 const ORDER: Ordering = Ordering::SeqCst;
-const TELEMETRY_FILE: &'static str = "Flight_1047.csv";
+const TELEMETRY_FILE: &str = "Flight_1047.csv";
 
 // static atomic state for sharing with the sending thread
 // have we started the sending thread? - prevent starting two threads
@@ -208,6 +207,8 @@ impl GroundStationGui {
                         self.packet_log.push(Packet::Received(packet.clone()));
                         if let ReceivedPacket::Telemetry { telem, .. } = &packet {
                             self.add_telem(telem.clone());
+                        } else if let ReceivedPacket::Status { tx_status, .. } = &packet {
+                            self.recv_ack(*tx_status);
                         } else {
                             for telem in Self::recover_telemetry(&packet) {
                                 tracing::info!(
@@ -272,6 +273,24 @@ impl GroundStationGui {
         }
     }
 
+    /// Handle an ack for a packet
+    fn recv_ack(&mut self, tx_status: TxStatus) {
+        // if the delivery was a success mark it as acknowledged
+        if tx_status.status == DeliveryStatus::Success {
+            // mark the command as acknowledged
+            for (_, (cmd, status)) in self.command_history.iter_mut().rev() {
+                match status {
+                    CommandStatus::Sent { frame_id } if *frame_id == tx_status.frame_id => {
+                        tracing::info!("Received acknowledgement for command - {cmd:?}");
+                        *status = CommandStatus::Acked;
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
     /// Sometimes invalid packets contain data that we can actually salvage
     fn recover_telemetry(packet: &ReceivedPacket) -> Vec<Telemetry> {
         let ReceivedPacket::Invalid(data) = packet else {
@@ -292,10 +311,15 @@ impl GroundStationGui {
             }
         }
 
+        tracing::debug!("Found ascii substrings in invalid data: {ascii_substrings:?}");
+
         // collect any substrings which parse as telemetry
         ascii_substrings
             .into_iter()
-            .filter_map(|s| s.parse().ok())
+            .filter_map(|s| {
+                let start = s.find(TEAM_ID_STR)?;
+                s[start..].parse().ok()
+            })
             .collect()
     }
 
@@ -824,10 +848,8 @@ impl GroundStationGui {
                 if ui.button("Open port").clicked() {
                     self.open_radio_connection();
                 }
-            } else {
-                if ui.button("Disconnect").clicked() {
-                    self.close_radio();
-                }
+            } else if ui.button("Disconnect").clicked() {
+                self.close_radio();
             }
         });
 
@@ -882,11 +904,9 @@ impl GroundStationGui {
                                 tracing::info!("Playing simulation mode playback");
                                 SEND_THREAD_PAUSED.store(false, ORDER);
                             }
-                        } else {
-                            if ui.button("pause").clicked() {
-                                tracing::info!("Pausing simulation mode playback");
-                                SEND_THREAD_PAUSED.store(true, ORDER);
-                            }
+                        } else if ui.button("pause").clicked() {
+                            tracing::info!("Pausing simulation mode playback");
+                            SEND_THREAD_PAUSED.store(true, ORDER);
                         }
                     });
 
@@ -936,9 +956,17 @@ impl GroundStationGui {
         // send SIM,ENABLE then SIM,ACTIVATE
         cmd_sender
             .send(String::from("CMD,1047,SIM,ENABLE"))
+            .map_err(|e| {
+                tracing::error!("Failed to send SIM,ENABLE.");
+                e
+            })
             .expect("Failed to send SIM,ENABLE.");
         cmd_sender
             .send(String::from("CMD,1047,SIM,ACTIVATE"))
+            .map_err(|e| {
+                tracing::error!("Failed to send SIM,ACTIVATE.");
+                e
+            })
             .expect("Failed to send SIM,ACTIVATE.");
 
         // iterate through the commands, sleeping for one second before sending the next
@@ -994,6 +1022,7 @@ impl GroundStationGui {
 
 // TODO: add radio / similar status indicators to the top bar
 // TODO: make the simulation mode disable itself upon pausing etc
+// TODO: actually implement the telemetry enable command
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
@@ -1053,7 +1082,7 @@ impl eframe::App for GroundStationGui {
                 .show(ctx, |ui| self.command_center.show(ui));
 
             // get the inner response and flatten the nested Options
-            let maybe_cmd = resp.map(|inner| inner.inner.flatten()).flatten();
+            let maybe_cmd = resp.and_then(|inner| inner.inner.flatten());
 
             // send the command down the channel if there was one
             if let Some(cmd) = maybe_cmd {
