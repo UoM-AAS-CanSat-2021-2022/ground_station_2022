@@ -18,7 +18,7 @@ use derive_builder::Builder;
 use eframe::{egui, emath::Align};
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
-    Color32, Grid, Layout, Ui,
+    Color32, Grid, Layout, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
@@ -168,7 +168,6 @@ impl Default for GroundStationGui {
     }
 }
 
-// TODO: add a commands sent view
 #[derive(Sequence, Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum MainPanelView {
     #[default]
@@ -176,6 +175,7 @@ pub enum MainPanelView {
     OneGraph,
     Table,
     Packets,
+    Commands,
 }
 
 impl AsStr for MainPanelView {
@@ -185,6 +185,7 @@ impl AsStr for MainPanelView {
             MainPanelView::AllGraphs => "All Graphs",
             MainPanelView::Table => "Data Table",
             MainPanelView::Packets => "Packets",
+            MainPanelView::Commands => "Commands",
         }
     }
 }
@@ -713,7 +714,7 @@ impl GroundStationGui {
             });
     }
 
-    fn data_table_view(&mut self, ui: &mut Ui) {
+    fn data_table_view(&self, ui: &mut Ui) {
         const ROW_HEIGHT: f32 = 20.0;
         const COL_WIDTH_MULT: f32 = 13.0;
 
@@ -756,7 +757,7 @@ impl GroundStationGui {
             });
     }
 
-    fn packets_view(&mut self, ui: &mut Ui) {
+    fn packets_view(&self, ui: &mut Ui) {
         const ROW_HEIGHT: f32 = 18.0;
 
         egui::ScrollArea::horizontal()
@@ -777,6 +778,65 @@ impl GroundStationGui {
                                 });
                             });
                         });
+                    });
+            });
+    }
+
+    // TODO: add a right click tooltip to re-sent the packet if it wasn't acked
+    fn commands_view(&mut self, ui: &mut Ui) {
+        const ROW_HEIGHT: f32 = 20.0;
+
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .max_height(f32::INFINITY)
+            .show(ui, |ui| {
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .max_scroll_height(f32::INFINITY)
+                    .column(Column::initial(65.0).resizable(true))
+                    .column(Column::remainder())
+                    .header(ROW_HEIGHT + 5.0, |mut row| {
+                        row.col(|ui| {
+                            ui.heading("Status");
+                        });
+                        row.col(|ui| {
+                            ui.heading("Command");
+                        });
+                    })
+                    .body(|body| {
+                        body.rows(
+                            ROW_HEIGHT,
+                            self.command_history.len(),
+                            |row_index, mut row| {
+                                let (_, (cmd, status)) = self
+                                    .command_history
+                                    .iter()
+                                    .nth(row_index)
+                                    .expect("Tried to access a command that didn't exist.");
+
+                                // show the status in the first column and the command in the second
+                                row.col(|ui| {
+                                    let color = match status {
+                                        CommandStatus::Unsent => Color32::RED,
+                                        CommandStatus::Sent { .. } => Color32::YELLOW,
+                                        CommandStatus::Acked => Color32::GREEN,
+                                    };
+
+                                    let r = 10.0;
+                                    let size = Vec2::splat(2.0 * r + 5.0);
+                                    let (rect, _response) =
+                                        ui.allocate_at_least(size, Sense::hover());
+
+                                    ui.painter().circle_filled(rect.center(), r, color);
+                                });
+
+                                row.col(|ui| {
+                                    ui.label(cmd);
+                                });
+                            },
+                        );
                     });
             });
     }
@@ -1118,6 +1178,7 @@ impl eframe::App for GroundStationGui {
                 MainPanelView::AllGraphs => self.all_graphs_view(ui),
                 MainPanelView::Table => self.data_table_view(ui),
                 MainPanelView::Packets => self.packets_view(ui),
+                MainPanelView::Commands => self.commands_view(ui),
             }
         });
 
