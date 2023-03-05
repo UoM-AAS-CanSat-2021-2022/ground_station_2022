@@ -1022,7 +1022,6 @@ impl GroundStationGui {
 
 // TODO: add radio / similar status indicators to the top bar
 // TODO: make the simulation mode disable itself upon pausing etc
-// TODO: actually implement the telemetry enable command
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio

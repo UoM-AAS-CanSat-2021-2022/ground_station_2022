@@ -1,4 +1,5 @@
 mod action;
+mod enabled;
 mod sim_mode;
 mod state;
 mod time;
@@ -13,7 +14,10 @@ use std::fmt::Display;
 use time::Time;
 
 use crate::{
-    app::commands::state::{ContainerState, PayloadState},
+    app::commands::{
+        enabled::Enabled,
+        state::{ContainerState, PayloadState},
+    },
     as_str::AsStr,
     constants::TEAM_ID,
     telemetry::GpsTime,
@@ -23,6 +27,7 @@ use enum_iterator::{all, Sequence};
 /// Holds all the state related to sending commands / the command UI
 pub struct CommandPanel {
     curr_command: Command,
+    telem_enable: Enabled,
     time: Time,
     manual_time: GpsTime,
     sim_state: SimMode,
@@ -39,6 +44,7 @@ impl Default for CommandPanel {
         let utc = chrono::Utc::now();
         Self {
             curr_command: Default::default(),
+            telem_enable: Enabled::On,
             time: Default::default(),
             // default to the current UTC time
             manual_time: GpsTime {
@@ -84,6 +90,7 @@ impl CommandPanel {
 
     fn build_cmd(&self) -> String {
         match self.curr_command {
+            Command::TelemetryEnable => format!("CMD,{TEAM_ID},CX,{}", self.telem_enable),
             Command::SetTime => match self.time {
                 Time::Manual => format!("CMD,{TEAM_ID},ST,{}", self.manual_time),
                 Time::CurrUtc => {
@@ -119,6 +126,7 @@ impl CommandPanel {
         Self::combobox_row(ui, &mut self.curr_command, "Command:", "command_combobox");
 
         match self.curr_command {
+            Command::TelemetryEnable => self.telemetry_enable_view(ui),
             Command::SetTime => self.set_time_view(ui),
             Command::SimulationMode => self.simulation_mode_view(ui),
             Command::SimulatedPressure => self.simulation_pressure_view(ui),
@@ -138,6 +146,10 @@ impl CommandPanel {
             None
         })
         .inner
+    }
+
+    fn telemetry_enable_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.telem_enable, "Enable:", "cx_combobox");
     }
 
     fn set_time_view(&mut self, ui: &mut Ui) {
@@ -160,7 +172,7 @@ impl CommandPanel {
         Self::combobox_row(
             ui,
             &mut self.sim_state,
-            "Simulation Mode",
+            "Simulation Mode:",
             "sim_mode_picker",
         );
     }
@@ -215,6 +227,9 @@ type Pascals = u32;
 
 #[derive(Sequence, Default, Debug, Copy, Clone, Eq, PartialEq)]
 enum Command {
+    /// CX - Enable/Disable container telemetry
+    TelemetryEnable,
+
     /// ST - Set time command, can be any of: manual, current_utc, gps
     #[default]
     SetTime,
@@ -241,6 +256,7 @@ enum Command {
 impl AsStr for Command {
     fn as_str(&self) -> &'static str {
         match self {
+            Command::TelemetryEnable => "Telemetry Enable",
             Command::SetTime => "Set Time",
             Command::SimulationMode => "Simulation Mode",
             Command::SimulatedPressure => "Simulated Pressure",
