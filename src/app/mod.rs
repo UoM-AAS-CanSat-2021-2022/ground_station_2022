@@ -14,25 +14,24 @@ use crate::{
     xbee::{DeliveryStatus, TxRequest, XbeePacket},
 };
 use chrono::{DateTime, Utc};
-use derive_builder::Builder;
 use eframe::{egui, emath::Align};
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
-    Color32, Grid, Layout, Sense, Ui, Vec2,
+    Color32, Grid, Layout, Ui,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
 use parking_lot::FairMutex;
 use serialport::{SerialPort, SerialPortType};
+use std::time::Instant;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
     fs::OpenOptions,
     io::{ErrorKind, Read, Write},
     path::PathBuf,
-    sync::atomic::AtomicUsize,
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
         mpsc::{channel, Receiver, Sender},
         Arc,
     },
@@ -54,10 +53,8 @@ static SEND_THREAD_PAUSED: AtomicBool = AtomicBool::new(false);
 // are we cancelling the sending thread
 static SEND_THREAD_CANCEL: AtomicBool = AtomicBool::new(false);
 // how many pressure values have been sent?
-static SENT_SIMPS: AtomicU32 = AtomicU32::new(0);
+static SENT_SIMPS: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Builder)]
-#[builder(pattern = "owned", default)]
 pub struct GroundStationGui {
     /// The collected telemetry from the current run
     telemetry: Vec<Telemetry>,
@@ -127,12 +124,26 @@ pub struct GroundStationGui {
     /// The XBee radio serial port connection
     radio: Option<Arc<FairMutex<Box<dyn SerialPort>>>>,
 
+    /// The instant the radio last sent a command
+    radio_last_sent: Instant,
+
     /// The channel down which to receive packets
-    #[builder(setter(strip_option))]
     packet_rx: Option<Receiver<ReceivedPacket>>,
 
     /// The received packets from the radio
     packet_log: Vec<Packet>,
+}
+
+impl GroundStationGui {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn new_with_receiver(packet_rx: Receiver<ReceivedPacket>) -> Self {
+        let mut gui = Self::default();
+        gui.packet_rx = Some(packet_rx);
+        gui
+    }
 }
 
 impl Default for GroundStationGui {
@@ -162,6 +173,7 @@ impl Default for GroundStationGui {
             radio_port: "".to_string(),
             radio_baud: 230400,
             radio: None,
+            radio_last_sent: Instant::now(),
             packet_rx: None,
             packet_log: vec![],
         }
@@ -283,7 +295,9 @@ impl GroundStationGui {
                 match status {
                     CommandStatus::Sent { frame_id } if *frame_id == tx_status.frame_id => {
                         tracing::info!("Received acknowledgement for command - {cmd:?}");
-                        *status = CommandStatus::Acked;
+                        *status = CommandStatus::SentStatus {
+                            status: tx_status.status,
+                        };
                         break;
                     }
                     _ => (),
@@ -337,6 +351,8 @@ impl GroundStationGui {
                 let radio = Arc::new(FairMutex::new(port));
                 let (tx, rx) = channel();
                 self.radio = Some(radio.clone());
+                // sending command immediately after opening seems to not work well
+                self.radio_last_sent = Instant::now();
                 self.packet_rx = Some(rx);
 
                 // start a new thread :D
@@ -554,12 +570,22 @@ impl GroundStationGui {
             match packet.clone().serialise() {
                 Ok(data) => {
                     let mut radio = radio_mutex.lock();
+
+                    // send packets at a max rate of 1 every 100ms
+                    if Instant::now().duration_since(self.radio_last_sent)
+                        < Duration::from_millis(100)
+                    {
+                        break;
+                    }
+
                     if let Err(e) = radio.write(&data) {
                         tracing::error!("Failure sending packet - {data:02X?} - {e:?}");
                     } else {
                         tracing::info!("Sent command {cmd:?} with frame_id={frame_id:02X}");
                         *status = CommandStatus::Sent { frame_id };
                         self.packet_log.push(Packet::Sent(req));
+                        self.radio_last_sent = Instant::now();
+                        break;
                     }
                 }
                 Err(e) => {
@@ -782,7 +808,6 @@ impl GroundStationGui {
             });
     }
 
-    // TODO: add a right click tooltip to re-sent the packet if it wasn't acked
     fn commands_view(&mut self, ui: &mut Ui) {
         const ROW_HEIGHT: f32 = 18.0;
 
@@ -818,15 +843,22 @@ impl GroundStationGui {
 
                                 let (color, hover_text) = match status {
                                     CommandStatus::Unsent => {
-                                        (Color32::RED, "Command not sent yet.")
+                                        (Color32::GRAY, "Command not sent yet.".to_string())
                                     }
-                                    CommandStatus::Sent { .. } => {
-                                        (Color32::YELLOW, "Command sent but not acknowledged.")
-                                    }
-                                    CommandStatus::Acked => (
-                                        Color32::GREEN,
-                                        "Command sent and acknowledgement received.",
+                                    CommandStatus::Sent { .. } => (
+                                        Color32::YELLOW,
+                                        "Command sent but not acknowledged.".to_string(),
                                     ),
+                                    CommandStatus::SentStatus {
+                                        status: DeliveryStatus::Success,
+                                    } => (
+                                        Color32::GREEN,
+                                        "Command sent and positive acknowledgement received."
+                                            .to_string(),
+                                    ),
+                                    CommandStatus::SentStatus { status } => {
+                                        (Color32::RED, format!("Command sent, status = {status:?}"))
+                                    }
                                 };
 
                                 // show the status in the first column and the command in the second
@@ -1026,28 +1058,46 @@ impl GroundStationGui {
     fn simp_thread(cmd_sender: Sender<String>, simp_data: Vec<u32>) {
         tracing::info!("simp thread started");
 
-        // send SIM,ENABLE then SIM,ACTIVATE
-        cmd_sender
-            .send(String::from("CMD,1047,SIM,ENABLE"))
-            .map_err(|e| {
-                tracing::error!("Failed to send SIM,ENABLE.");
-                e
-            })
-            .expect("Failed to send SIM,ENABLE.");
-        cmd_sender
-            .send(String::from("CMD,1047,SIM,ACTIVATE"))
-            .map_err(|e| {
-                tracing::error!("Failed to send SIM,ACTIVATE.");
-                e
-            })
-            .expect("Failed to send SIM,ACTIVATE.");
+        fn send_start_packets(sender: &Sender<String>) {
+            // send SIM,ENABLE then SIM,ACTIVATE
+            sender
+                .send(String::from("CMD,1047,SIM,ENABLE"))
+                .map_err(|e| {
+                    tracing::error!("Failed to send SIM,ENABLE.");
+                    e
+                })
+                .expect("Failed to send SIM,ENABLE.");
+            sender
+                .send(String::from("CMD,1047,SIM,ACTIVATE"))
+                .map_err(|e| {
+                    tracing::error!("Failed to send SIM,ACTIVATE.");
+                    e
+                })
+                .expect("Failed to send SIM,ACTIVATE.");
+        }
+
+        fn stop_sending(sender: &Sender<String>) {
+            // send SIM,DISABLE
+            sender
+                .send(String::from("CMD,1047,SIM,DISABLE"))
+                .map_err(|e| {
+                    tracing::error!("Failed to send SIM,DISABLE.");
+                    e
+                })
+                .expect("Failed to send SIM,ENABLE.");
+        }
+
+        // start sending
+        send_start_packets(&cmd_sender);
 
         // iterate through the commands, sleeping for one second before sending the next
         let mut simp_iter = simp_data.into_iter();
+        let mut paused = false;
         loop {
             // if SEND_THREAD_CANCEL is true, replace with false and cancel this thread
             if let Ok(true) = SEND_THREAD_CANCEL.compare_exchange(true, false, ORDER, ORDER) {
                 tracing::info!("Cancelling simulation mode thread");
+                stop_sending(&cmd_sender);
                 SEND_THREAD_PAUSED.store(false, ORDER);
                 SEND_THREAD_STARTED.store(false, ORDER);
                 SENT_SIMPS.store(0, ORDER);
@@ -1055,9 +1105,19 @@ impl GroundStationGui {
             }
 
             // wait until we are unpaused to send the command
-            if SEND_THREAD_PAUSED.load(ORDER) {
+            let thread_paused = SEND_THREAD_PAUSED.load(ORDER);
+            if thread_paused {
+                // newly paused, send SIM,DISABLE
+                if thread_paused && !paused {
+                    stop_sending(&cmd_sender);
+                    paused = true;
+                }
                 thread::sleep(Duration::from_millis(100));
                 continue;
+            } else if paused {
+                // just paused, start sending again
+                send_start_packets(&cmd_sender);
+                paused = false;
             }
 
             if let Some(simp) = simp_iter.next() {
@@ -1094,7 +1154,6 @@ impl GroundStationGui {
 }
 
 // TODO: add radio / similar status indicators to the top bar
-// TODO: make the simulation mode disable itself upon pausing etc
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
@@ -1205,10 +1264,10 @@ impl eframe::App for GroundStationGui {
 pub enum CommandStatus {
     // used if the radio isn't connected
     Unsent,
-    // sent but not acked
+    // sent but no status
     Sent { frame_id: u8 },
-    // sent and acked
-    Acked,
+    // sent and status received
+    SentStatus { status: DeliveryStatus },
 }
 
 // the packets used to store in the packet log

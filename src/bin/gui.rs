@@ -5,7 +5,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
 use eframe::egui;
-use ground_station::app::{GroundStationGui, GroundStationGuiBuilder};
+use ground_station::app::GroundStationGui;
 use ground_station::listener::TelemetryListener;
 use ground_station::reader::TelemetryReader;
 use tracing::Level;
@@ -14,8 +14,6 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 fn main() -> Result<()> {
     // initialise the logger
     let log_file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
-    std::fs::write(&log_file_name, "")?;
-
     let file_appender = tracing_appender::rolling::never(".", log_file_name);
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
@@ -37,7 +35,7 @@ fn main() -> Result<()> {
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("reader".to_string())
                 .spawn(move || reader.run())?;
-            GroundStationGuiBuilder::default().packet_rx(rx).build()?
+            GroundStationGui::new_with_receiver(rx)
         }
         "listener" => {
             // listen on a port for telemetry
@@ -46,7 +44,7 @@ fn main() -> Result<()> {
             let _handle: JoinHandle<Result<()>> = thread::Builder::new()
                 .name("listener".to_string())
                 .spawn(move || listener.run())?;
-            GroundStationGuiBuilder::default().packet_rx(rx).build()?
+            GroundStationGui::new_with_receiver(rx)
         }
         _ => {
             if arg != "radio" {
