@@ -784,7 +784,7 @@ impl GroundStationGui {
 
     // TODO: add a right click tooltip to re-sent the packet if it wasn't acked
     fn commands_view(&mut self, ui: &mut Ui) {
-        const ROW_HEIGHT: f32 = 20.0;
+        const ROW_HEIGHT: f32 = 18.0;
 
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
@@ -816,24 +816,37 @@ impl GroundStationGui {
                                     .nth(row_index)
                                     .expect("Tried to access a command that didn't exist.");
 
+                                let (color, hover_text) = match status {
+                                    CommandStatus::Unsent => {
+                                        (Color32::RED, "Command not sent yet.")
+                                    }
+                                    CommandStatus::Sent { .. } => {
+                                        (Color32::YELLOW, "Command sent but not acknowledged.")
+                                    }
+                                    CommandStatus::Acked => (
+                                        Color32::GREEN,
+                                        "Command sent and acknowledgement received.",
+                                    ),
+                                };
+
                                 // show the status in the first column and the command in the second
                                 row.col(|ui| {
-                                    let color = match status {
-                                        CommandStatus::Unsent => Color32::RED,
-                                        CommandStatus::Sent { .. } => Color32::YELLOW,
-                                        CommandStatus::Acked => Color32::GREEN,
-                                    };
-
-                                    let r = 10.0;
-                                    let size = Vec2::splat(2.0 * r + 5.0);
-                                    let (rect, _response) =
-                                        ui.allocate_at_least(size, Sense::hover());
-
-                                    ui.painter().circle_filled(rect.center(), r, color);
-                                });
+                                    let r = (ROW_HEIGHT - 4.0) / 2.0;
+                                    ui.painter().circle_filled(ui.max_rect().center(), r, color);
+                                })
+                                .1
+                                .on_hover_text_at_pointer(hover_text);
 
                                 row.col(|ui| {
-                                    ui.label(cmd);
+                                    ui.horizontal(|ui| ui.label(cmd));
+                                })
+                                .1
+                                .context_menu(|ui| {
+                                    if ui.button("Resend").clicked() {
+                                        if let Err(e) = self.cmd_sender.send(cmd.clone()) {
+                                            tracing::warn!("Failed to resend cmd={cmd:?} - {e:?}");
+                                        }
+                                    }
                                 });
                             },
                         );
