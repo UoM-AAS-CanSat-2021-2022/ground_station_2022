@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use eframe::{egui, emath::Align};
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
-    Color32, Grid, Layout, Ui,
+    Color32, Grid, Layout, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
@@ -1151,9 +1151,22 @@ impl GroundStationGui {
             ui.label("Missed Packets: ");
         });
     }
+
+    fn radio_status_ui(&self, ui: &mut Ui) {
+        let (color, hover_text) = if self.radio.is_some() {
+            (Color32::GREEN, "Radio is connected.")
+        } else {
+            (Color32::RED, "Radio is disconnected.")
+        };
+
+        let r = 7.0;
+        let area = Vec2::splat((r + 1.0) * 2.0);
+        let (rect, resp) = ui.allocate_at_least(area, Sense::hover());
+        ui.painter().circle_filled(rect.center(), r, color);
+        resp.on_hover_text_at_pointer(hover_text);
+    }
 }
 
-// TODO: add radio / similar status indicators to the top bar
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio
@@ -1168,6 +1181,10 @@ impl eframe::App for GroundStationGui {
                 ui.separator();
 
                 egui::global_dark_light_mode_switch(ui);
+                ui.separator();
+
+                // show the radio status
+                self.radio_status_ui(ui);
                 ui.separator();
 
                 // main view buttons
