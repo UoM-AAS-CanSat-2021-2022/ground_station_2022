@@ -29,11 +29,27 @@ impl MissionTime {
             + self.s as f64
             + self.cs as f64 / 100.0
     }
+
+    pub fn from_seconds(sec: f64) -> Self {
+        let h = sec / 3600.0;
+        let m = (sec / 60.0) % 60.0;
+        let s = sec % 60.0;
+        let cs = (sec * 100.0) % 100.0;
+
+        Self {
+            h: h as _,
+            m: m as _,
+            s: s as _,
+            cs: cs as _,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::distributions::Uniform;
+    use rand::{thread_rng, Rng};
 
     #[test]
     fn test_misstion_time_fromstr_invalid() {
@@ -64,5 +80,31 @@ mod tests {
         };
 
         assert_eq!(format!("{}", mt), "01:02:03.04".to_string())
+    }
+
+    #[test]
+    fn test_from_seconds_recovers_exact_time() {
+        let mut rng = thread_rng();
+
+        let range_24 = Uniform::new(0, 24u8);
+        let range_60 = Uniform::new(0, 60u8);
+        let range_100 = Uniform::new(0, 100u8);
+
+        // generate a random time and check it worked
+        for _ in 0..1000 {
+            let mt = MissionTime {
+                h: rng.sample(range_24),
+                m: rng.sample(range_60),
+                s: rng.sample(range_60),
+                cs: rng.sample(range_100),
+            };
+            let rt = MissionTime::from_seconds(mt.as_seconds());
+
+            // must recovert hour, minute, second, centisecond can have some leniency
+            assert_eq!(mt.h, rt.h);
+            assert_eq!(mt.m, rt.m);
+            assert_eq!(mt.s, rt.s);
+            assert!(mt.cs.abs_diff(rt.cs) <= 1);
+        }
     }
 }

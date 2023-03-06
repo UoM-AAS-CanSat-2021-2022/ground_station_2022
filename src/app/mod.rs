@@ -5,6 +5,7 @@ pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
 
+use crate::telemetry::MissionTime;
 use crate::xbee::TxStatus;
 use crate::{
     app::commands::CommandPanel,
@@ -660,8 +661,24 @@ impl GroundStationGui {
             .copied()
             .collect();
         let line = Line::new(PlotPoints::Owned(points)).name(field.as_str());
-        // TODO: add a CoordinatesFormatter here
-        Plot::new(id_source).show(ui, |plot_ui| plot_ui.line(line));
+        Plot::new(id_source)
+            .x_axis_formatter(|x, _range| {
+                let mt = MissionTime::from_seconds(x);
+                format!("{:02}:{:02}:{:02}", mt.h, mt.m, mt.s)
+            })
+            .label_formatter(move |name, point| {
+                if name.is_empty() {
+                    String::new()
+                } else {
+                    let time = MissionTime::from_seconds(point.x);
+                    format!("{name}: {}\n{time}", field.format_value(point.y))
+                }
+            })
+            .allow_drag(false)
+            .allow_scroll(false)
+            .allow_zoom(false)
+            .allow_boxed_zoom(false)
+            .show(ui, |plot_ui| plot_ui.line(line));
     }
 
     fn one_graph_view(&mut self, ui: &mut Ui) {
@@ -1167,6 +1184,7 @@ impl GroundStationGui {
     }
 }
 
+// TODO: Add a 3d graph showing the GPS position data in real time
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio

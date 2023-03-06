@@ -72,6 +72,21 @@ impl Graphable {
             Graphable::TiltY       => telem.tilt_y,
         }
     }
+
+    pub fn format_value(&self, value: f64) -> String {
+        match self {
+            Graphable::PacketCount => format!("{value}"),
+            Graphable::Altitude => format!("{value}m"),
+            Graphable::Temperature => format!("{value}°C"),
+            Graphable::Voltage => format!("{value}V"),
+            Graphable::GpsAltitude => format!("{value}m"),
+            Graphable::GpsLatitude => format!("{value}°"),
+            Graphable::GpsLongitude => format!("{value}°"),
+            Graphable::GpsSats => format!("{value}"),
+            Graphable::TiltX => format!("{value}°"),
+            Graphable::TiltY => format!("{value}°"),
+        }
+    }
 }
 
 impl fmt::Display for Graphable {

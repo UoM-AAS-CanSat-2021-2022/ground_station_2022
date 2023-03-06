@@ -99,7 +99,7 @@ fn main() -> Result<()> {
             sport.write_all(&ser)?;
         }
 
-        frame_id += 1;
+        frame_id.wrapping_add(1);
         packet_count += 1;
 
         // wait to send the next packet
