@@ -75,16 +75,16 @@ impl Graphable {
 
     pub fn format_value(&self, value: f64) -> String {
         match self {
-            Graphable::PacketCount => format!("{value}"),
-            Graphable::Altitude => format!("{value}m"),
-            Graphable::Temperature => format!("{value}°C"),
-            Graphable::Voltage => format!("{value}V"),
-            Graphable::GpsAltitude => format!("{value}m"),
-            Graphable::GpsLatitude => format!("{value}°"),
-            Graphable::GpsLongitude => format!("{value}°"),
-            Graphable::GpsSats => format!("{value}"),
-            Graphable::TiltX => format!("{value}°"),
-            Graphable::TiltY => format!("{value}°"),
+            Graphable::PacketCount => format!("{value:.0}"),
+            Graphable::Altitude => format!("{value:.1}m"),
+            Graphable::Temperature => format!("{value:.1}°C"),
+            Graphable::Voltage => format!("{value:.1}V"),
+            Graphable::GpsAltitude => format!("{value:.1}m"),
+            Graphable::GpsLatitude => format!("{value:.4}°N"),
+            Graphable::GpsLongitude => format!("{value:.4}°W"),
+            Graphable::GpsSats => format!("{value:.0}"),
+            Graphable::TiltX => format!("{value:.2}°"),
+            Graphable::TiltY => format!("{value:.2}°"),
         }
     }
 }

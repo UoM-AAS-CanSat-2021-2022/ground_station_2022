@@ -666,6 +666,7 @@ impl GroundStationGui {
                 let mt = MissionTime::from_seconds(x);
                 format!("{:02}:{:02}:{:02}", mt.h, mt.m, mt.s)
             })
+            .y_axis_formatter(move |y, _range| field.format_value(y))
             .label_formatter(move |name, point| {
                 if name.is_empty() {
                     String::new()
@@ -674,6 +675,7 @@ impl GroundStationGui {
                     format!("{name}: {}\n{time}", field.format_value(point.y))
                 }
             })
+            .show_axes([true, true])
             .allow_drag(false)
             .allow_scroll(false)
             .allow_zoom(false)
