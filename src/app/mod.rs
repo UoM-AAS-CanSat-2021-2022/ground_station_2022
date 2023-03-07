@@ -16,9 +16,10 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use eframe::{egui, emath::Align};
+use egui::text::LayoutJob;
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
-    Color32, Grid, Layout, Sense, Ui, Vec2,
+    Color32, FontFamily, FontId, Grid, Layout, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
@@ -760,8 +761,9 @@ impl GroundStationGui {
     }
 
     fn data_table_view(&self, ui: &mut Ui) {
-        const ROW_HEIGHT: f32 = 20.0;
-        const COL_WIDTH_MULT: f32 = 13.0;
+        const HEADER_FONT_HEIGHT: f32 = 18.0;
+        const MAIN_FONT_HEIGHT: f32 = 14.0;
+        const COL_WIDTH_MULT: f32 = 12.0;
 
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
@@ -781,23 +783,37 @@ impl GroundStationGui {
                 builder
                     .auto_shrink([false, false])
                     .max_scroll_height(f32::INFINITY)
-                    .header(ROW_HEIGHT + 5.0, |mut header| {
+                    .header(HEADER_FONT_HEIGHT, |mut header| {
                         for field in all::<TelemetryField>() {
                             header.col(|ui| {
-                                ui.heading(field.as_str());
+                                ui.label(LayoutJob::simple(
+                                    field.as_str().to_string(),
+                                    FontId::new(HEADER_FONT_HEIGHT, FontFamily::Monospace),
+                                    Color32::GRAY,
+                                    f32::INFINITY,
+                                ));
                             });
                         }
                     })
                     .body(|body| {
-                        body.rows(ROW_HEIGHT, self.telemetry.len(), |row_index, mut row| {
-                            let telem = &self.telemetry[row_index];
+                        body.rows(
+                            MAIN_FONT_HEIGHT,
+                            self.telemetry.len(),
+                            |row_index, mut row| {
+                                let telem = &self.telemetry[row_index];
 
-                            for field in all::<TelemetryField>() {
-                                row.col(|ui| {
-                                    ui.label(telem.get_field(field));
-                                });
-                            }
-                        });
+                                for field in all::<TelemetryField>() {
+                                    row.col(|ui| {
+                                        ui.label(LayoutJob::simple(
+                                            telem.get_field(field),
+                                            FontId::new(MAIN_FONT_HEIGHT, FontFamily::Monospace),
+                                            Color32::GRAY,
+                                            f32::INFINITY,
+                                        ));
+                                    });
+                                }
+                            },
+                        );
                     });
             });
     }
