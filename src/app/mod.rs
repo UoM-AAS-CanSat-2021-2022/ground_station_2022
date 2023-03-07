@@ -788,7 +788,7 @@ impl GroundStationGui {
                             header.col(|ui| {
                                 ui.label(LayoutJob::simple(
                                     field.as_str().to_string(),
-                                    FontId::new(HEADER_FONT_HEIGHT, FontFamily::Monospace),
+                                    FontId::monospace(HEADER_FONT_HEIGHT),
                                     Color32::GRAY,
                                     f32::INFINITY,
                                 ));
@@ -819,7 +819,7 @@ impl GroundStationGui {
     }
 
     fn packets_view(&self, ui: &mut Ui) {
-        const ROW_HEIGHT: f32 = 18.0;
+        const ROW_HEIGHT: f32 = 20.0;
 
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
@@ -844,7 +844,9 @@ impl GroundStationGui {
     }
 
     fn commands_view(&mut self, ui: &mut Ui) {
-        const ROW_HEIGHT: f32 = 18.0;
+        const HEADER_FONT_HEIGHT: f32 = 20.0;
+        const MAIN_FONT_HEIGHT: f32 = 16.0;
+        const COL_WIDTH_MULT: f32 = 13.0;
 
         egui::ScrollArea::horizontal()
             .auto_shrink([false, false])
@@ -855,19 +857,29 @@ impl GroundStationGui {
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .max_scroll_height(f32::INFINITY)
-                    .column(Column::initial(65.0).resizable(true))
+                    .column(Column::initial(6.0 * COL_WIDTH_MULT).resizable(true))
                     .column(Column::remainder())
-                    .header(ROW_HEIGHT + 5.0, |mut row| {
+                    .header(HEADER_FONT_HEIGHT, |mut row| {
                         row.col(|ui| {
-                            ui.heading("Status");
+                            ui.label(LayoutJob::simple(
+                                "Status".to_owned(),
+                                FontId::monospace(HEADER_FONT_HEIGHT),
+                                Color32::GRAY,
+                                f32::INFINITY,
+                            ));
                         });
                         row.col(|ui| {
-                            ui.heading("Command");
+                            ui.label(LayoutJob::simple(
+                                "Command".to_owned(),
+                                FontId::monospace(HEADER_FONT_HEIGHT),
+                                Color32::GRAY,
+                                f32::INFINITY,
+                            ));
                         });
                     })
                     .body(|body| {
                         body.rows(
-                            ROW_HEIGHT,
+                            MAIN_FONT_HEIGHT,
                             self.command_history.len(),
                             |row_index, mut row| {
                                 let (_, (cmd, status)) = self
@@ -898,14 +910,21 @@ impl GroundStationGui {
 
                                 // show the status in the first column and the command in the second
                                 row.col(|ui| {
-                                    let r = (ROW_HEIGHT - 4.0) / 2.0;
+                                    let r = (MAIN_FONT_HEIGHT - 4.0) / 2.0;
                                     ui.painter().circle_filled(ui.max_rect().center(), r, color);
                                 })
                                 .1
                                 .on_hover_text_at_pointer(hover_text);
 
                                 row.col(|ui| {
-                                    ui.horizontal(|ui| ui.label(cmd));
+                                    ui.horizontal(|ui| {
+                                        ui.label(LayoutJob::simple(
+                                            cmd.to_string(),
+                                            FontId::monospace(MAIN_FONT_HEIGHT),
+                                            Color32::GRAY,
+                                            f32::INFINITY,
+                                        ));
+                                    });
                                 })
                                 .1
                                 .context_menu(|ui| {
@@ -1337,10 +1356,20 @@ impl Packet {
 
         match self {
             Packet::Sent(req) => {
-                ui.colored_label(SENT_COLOR, format!("{req}"));
+                ui.label(LayoutJob::simple(
+                    format!("{req}"),
+                    FontId::monospace(20.0),
+                    SENT_COLOR,
+                    f32::INFINITY,
+                ));
             }
             Packet::Received(packet) => {
-                ui.colored_label(RECV_COLOR, format!("{packet}"));
+                ui.label(LayoutJob::simple(
+                    format!("{packet}"),
+                    FontId::monospace(20.0),
+                    RECV_COLOR,
+                    f32::INFINITY,
+                ));
             }
         }
     }
