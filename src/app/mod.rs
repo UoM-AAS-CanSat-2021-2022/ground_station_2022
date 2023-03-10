@@ -5,6 +5,7 @@ pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
 
+use crate::constants::TELEMETRY_FILE;
 use crate::telemetry::MissionTime;
 use crate::xbee::TxStatus;
 use crate::{
@@ -16,21 +17,20 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use eframe::{egui, emath::Align};
-use egui::text::LayoutJob;
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
+    text::LayoutJob,
     Color32, FontFamily, FontId, Grid, Layout, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use enum_iterator::{all, Sequence};
 use parking_lot::FairMutex;
 use serialport::{SerialPort, SerialPortType};
-use std::time::Instant;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
     fs::OpenOptions,
-    io::{ErrorKind, Read, Write},
+    io::{self, ErrorKind, Read, Write},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
@@ -38,14 +38,13 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 static CURR_RADIO: AtomicUsize = AtomicUsize::new(0);
 
 // use the strongest ordering for all atomic operations
 const ORDER: Ordering = Ordering::SeqCst;
-const TELEMETRY_FILE: &str = "Flight_1047.csv";
 
 // static atomic state for sharing with the sending thread
 // have we started the sending thread? - prevent starting two threads
@@ -142,9 +141,10 @@ impl GroundStationGui {
     }
 
     pub fn new_with_receiver(packet_rx: Receiver<ReceivedPacket>) -> Self {
-        let mut gui = Self::default();
-        gui.packet_rx = Some(packet_rx);
-        gui
+        GroundStationGui {
+            packet_rx: Some(packet_rx),
+            ..Default::default()
+        }
     }
 }
 
@@ -396,9 +396,16 @@ impl GroundStationGui {
         // check we are the current radio - exiting cleanly if we aren't
         while radio_num == CURR_RADIO.load(ORDER) {
             // acquire a lock on the radio
-            let mut radio = radio_mutex.lock();
+            let read_res = {
+                let mut radio = radio_mutex.lock();
+                // read from the radio
+                radio
+                    .bytes_to_read()
+                    .map_err(io::Error::other)
+                    .and_then(|n| radio.read(&mut buf[write_idx..write_idx + n as usize]))
+            };
 
-            match radio.read(&mut buf[write_idx..]) {
+            match read_res {
                 Ok(bytes_read) => {
                     tracing::debug!(
                         "Read {bytes_read} bytes from the radio - {:?} - {:02X?}",
@@ -421,6 +428,7 @@ impl GroundStationGui {
                 }
 
                 Err(e) => {
+                    tracing::debug!("Hit error: e={e:?}");
                     match e.kind() {
                         // this kind of error happens when no data is there to be read
                         // we can safely ignore this kind of error
@@ -565,13 +573,15 @@ impl GroundStationGui {
                 frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
             }
             let req = TxRequest::new(frame_id, BROADCAST_ADDR, cmd);
-            let Ok(packet): std::io::Result<XbeePacket> = req.clone().try_into() else {
+            let Ok(packet): io::Result<XbeePacket> = req.clone().try_into() else {
                 tracing::error!("Failed to build a packet for cmd={cmd:?}");
                 continue;
             };
             match packet.clone().serialise() {
                 Ok(data) => {
-                    let mut radio = radio_mutex.lock();
+                    let Some(mut radio) = radio_mutex.try_lock() else {
+                        continue;
+                    };
 
                     // send packets at a max rate of 1 every 100ms
                     if Instant::now().duration_since(self.radio_last_sent)
@@ -1042,7 +1052,7 @@ impl GroundStationGui {
         // if we have pressure values display a little graph of them
         if let Some(simps) = &self.simp_graph_values {
             Plot::new("simp_plot").view_aspect(1.5).show(ui, |ui| {
-                let sent = SENT_SIMPS.load(ORDER) as usize;
+                let sent = SENT_SIMPS.load(ORDER);
                 let sent_simps = simps[..sent].to_vec();
                 let unsent_simps = simps[sent..].to_vec();
                 let sent_line = Line::new(PlotPoints::Owned(sent_simps)).color(Color32::GREEN);
@@ -1332,7 +1342,7 @@ impl eframe::App for GroundStationGui {
 }
 
 // the different states a command can have
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum CommandStatus {
     // used if the radio isn't connected
     Unsent,

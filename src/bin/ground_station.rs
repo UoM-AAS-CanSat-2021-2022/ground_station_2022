@@ -1,27 +1,32 @@
 use std::env::args;
-use std::io;
 use std::sync::mpsc::channel;
 use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
-use eframe::egui;
+use eframe::{egui, NativeOptions};
 use ground_station::app::GroundStationGui;
 use ground_station::listener::TelemetryListener;
 use ground_station::reader::TelemetryReader;
+use termcolor::ColorChoice;
 use tracing::Level;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 fn main() -> Result<()> {
-    // initialise the logger
+    // initialise the file writer
     let log_file_name = format!("{}.log", env!("CARGO_PKG_NAME"));
     let file_appender = tracing_appender::rolling::never(".", log_file_name);
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (file_writer, _file_guard) = tracing_appender::non_blocking(file_appender);
 
+    // initialise the colored stdout logger
+    let colored_stderr = termcolor::StandardStream::stderr(ColorChoice::Always);
+    let (stderr_writer, _stderr_guard) = tracing_appender::non_blocking(colored_stderr);
+
+    // initialise the logging system
     tracing_subscriber::fmt()
         .with_ansi(true)
         .with_max_level(Level::DEBUG)
         .with_thread_names(true)
-        .with_writer(non_blocking.and(io::stderr))
+        .with_writer(file_writer.and(stderr_writer))
         .init();
 
     // create a channel for communicating between the reader thread and the main thread
@@ -56,9 +61,13 @@ fn main() -> Result<()> {
     };
 
     // run GUI
+    let options = NativeOptions {
+        maximized: true,
+        ..Default::default()
+    };
     eframe::run_native(
         "MCP Ground Station",
-        Default::default(),
+        options,
         Box::new(|cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             Box::new(my_app)

@@ -23,7 +23,8 @@ byteorder             = "1.4"
 rfd                   = "0.11"
 parking_lot           = "0.12"
 enum-primitive-derive = "0.2"
-num-traits            = "0.2.15"
+num-traits            = "0.2"
+termcolor             = "1.2"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

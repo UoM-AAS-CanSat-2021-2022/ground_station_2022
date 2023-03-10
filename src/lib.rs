@@ -1,3 +1,5 @@
+#![feature(io_error_other)]
+
 pub mod app;
 pub mod as_str;
 pub mod constants;
