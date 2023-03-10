@@ -380,7 +380,8 @@ impl GroundStationGui {
         packet_tx: Sender<ReceivedPacket>,
     ) {
         // allocate a buffer for receiving packets
-        let mut buf = [0u8; 4096];
+        const BUFSIZ: usize = 4096;
+        let mut buf = [0u8; BUFSIZ];
         let mut write_idx = 0;
 
         // open the radio data log in append mode
@@ -402,7 +403,9 @@ impl GroundStationGui {
                 radio
                     .bytes_to_read()
                     .map_err(io::Error::other)
-                    .and_then(|n| radio.read(&mut buf[write_idx..write_idx + n as usize]))
+                    .and_then(|n| {
+                        radio.read(&mut buf[write_idx..usize::min(write_idx + n as usize, BUFSIZ)])
+                    })
             };
 
             match read_res {
