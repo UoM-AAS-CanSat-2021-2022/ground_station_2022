@@ -24,6 +24,7 @@ use egui_notify::Toasts;
 use enum_iterator::{all, Sequence};
 use parking_lot::FairMutex;
 use serialport::{SerialPort, SerialPortType};
+use std::sync::mpsc::{sync_channel, TryRecvError};
 use std::{
     collections::{BTreeMap, HashMap},
     fmt,
@@ -132,6 +133,9 @@ pub struct GroundStationGui {
     /// The received packets from the radio
     packet_log: Vec<Packet>,
 
+    /// The receiver for files picked by the user
+    file_receiver: Option<Receiver<PathBuf>>,
+
     /// The container for holding notifications
     notifications: Toasts,
 }
@@ -179,6 +183,7 @@ impl Default for GroundStationGui {
             radio_last_sent: Instant::now(),
             packet_rx: None,
             packet_log: vec![],
+            file_receiver: None,
             notifications: Toasts::new(),
         }
     }
@@ -237,14 +242,14 @@ impl GroundStationGui {
                     }
 
                     // don't replace the reader if the receiver is disconnected
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err(TryRecvError::Disconnected) => {
                         tracing::warn!("Telemetry Receiver disconnected.");
                         break;
                     }
 
                     // if the receiver has no more telemetry then give
                     // ownership of the receiver back to self
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    Err(TryRecvError::Empty) => {
                         self.packet_rx = Some(rx);
                         break;
                     }
@@ -951,7 +956,7 @@ impl GroundStationGui {
                                     if ui.button("Resend").clicked() {
                                         if let Err(e) = self.cmd_sender.send(cmd.clone()) {
                                             tracing::warn!("Failed to resend cmd={cmd:?} - {e:?}");
-                                            self.notifications.warning("failed to resend command");
+                                            self.notifications.error("failed to resend command");
                                         } else {
                                             self.notifications.info("resent command");
                                         }
@@ -1037,7 +1042,6 @@ impl GroundStationGui {
         });
 
         ui.separator();
-
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
             if self.radio.is_some() {
                 ui.colored_label(Color32::GREEN, "Connected");
@@ -1047,21 +1051,66 @@ impl GroundStationGui {
         });
     }
 
+    fn recv_sim_file(&mut self) {
+        let Some(file_rx) = &mut self.file_receiver else {
+            return;
+        };
+
+        let path = match file_rx.try_recv() {
+            Ok(path) => {
+                // only one file will ever be sent down the channel so destroy
+                // the receiver when one is received
+                self.file_receiver = None;
+                path
+            }
+            Err(TryRecvError::Empty) => {
+                // if the buffer is empty then the file picker is empty and
+                // the user hasn't picked a file yet
+                return;
+            }
+            Err(TryRecvError::Disconnected) => {
+                // if the receiver was disconnected then discard the receiver
+                // to allow another file picker to be opened
+                self.file_receiver = None;
+                self.notifications
+                    .warning("file picker closed without picking a file");
+                return;
+            }
+        };
+
+        if let Err(e) = self.load_sim_file(path) {
+            tracing::warn!("Failed to load sim file - {e:?}");
+            self.notifications.error("failed to load the sim file");
+        } else {
+            self.notifications.info("loaded sim file");
+        }
+    }
+
     fn sim_window(&mut self, ui: &mut Ui) {
         ui.set_min_width(300.0);
 
         ui.horizontal(|ui| {
             ui.label("Choose file: ");
             ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                if ui.button("Open file").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_file() {
-                        if let Err(e) = self.load_sim_file(path) {
-                            tracing::warn!("Failed to load sim file - {e:?}");
-                            self.notifications.warning("failed to load the sim file");
-                        } else {
-                            self.notifications.info("loaded sim file");
-                        }
+                // only open a new file picker if the
+                if ui.button("Open file").clicked() && self.file_receiver.is_none() {
+                    // start a new thread as rfd is a blocking library
+                    let (file_tx, file_rx) = sync_channel(1);
+                    let res = thread::Builder::new()
+                        .name(String::from("rfd"))
+                        .spawn(move || {
+                            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                file_tx.send(path).unwrap();
+                            }
+                        });
+
+                    if let Err(e) = res {
+                        tracing::error!("Failed to start file picker thread - {e:?}");
+                        self.notifications
+                            .error(format!("failed to start file picker thread"));
                     }
+
+                    self.file_receiver = Some(file_rx);
                 }
             });
         });
@@ -1263,6 +1312,9 @@ impl eframe::App for GroundStationGui {
 
         // handle any command we have left to send
         self.handle_commands();
+
+        // handle receiving a sim file if a file picker is open
+        self.recv_sim_file();
 
         // show any notifications
         self.notifications.show(ctx);
