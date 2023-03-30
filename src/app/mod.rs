@@ -5,15 +5,12 @@ pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
 
-use crate::constants::TELEMETRY_FILE;
-use crate::telemetry::MissionTime;
-use crate::xbee::TxStatus;
 use crate::{
     app::commands::CommandPanel,
     as_str::AsStr,
-    constants::{BAUD_RATES, BROADCAST_ADDR, SEALEVEL_HPA, TEAM_ID, TEAM_ID_STR},
-    telemetry::{Telemetry, TelemetryField},
-    xbee::{DeliveryStatus, TxRequest, XbeePacket},
+    constants::{BAUD_RATES, BROADCAST_ADDR, SEALEVEL_HPA, TEAM_ID, TEAM_ID_STR, TELEMETRY_FILE},
+    telemetry::{MissionTime, Telemetry, TelemetryField},
+    xbee::{DeliveryStatus, TxRequest, TxStatus, XbeePacket},
 };
 use chrono::{DateTime, Utc};
 use eframe::{egui, emath::Align};
@@ -565,7 +562,6 @@ impl GroundStationGui {
         // read any waiting commands into the command history, marking then unsent
         while let Ok(cmd) = self.cmd_receiver.try_recv() {
             tracing::debug!("Received command from channel - cmd={cmd:?}");
-            self.notifications.info(format!("Sent command - {cmd}"));
             self.command_history
                 .insert(Utc::now(), (cmd, CommandStatus::Unsent));
         }
@@ -1323,7 +1319,9 @@ impl eframe::App for GroundStationGui {
             // show the window and capture the response
             let resp = egui::Window::new("commands")
                 .open(&mut open)
-                .show(ctx, |ui| self.command_center.show(ui));
+                .show(ctx, |ui| {
+                    self.command_center.show(ui, &mut self.notifications)
+                });
 
             // get the inner response and flatten the nested Options
             let maybe_cmd = resp.and_then(|inner| inner.inner.flatten());

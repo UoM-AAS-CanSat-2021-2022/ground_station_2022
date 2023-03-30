@@ -1,6 +1,6 @@
 [package]
 name = "ground_station"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -28,9 +28,9 @@ termcolor             = "1.2"
 egui-notify           = "0.6"
 
 # Enable a small amount of optimization in debug mode
-[profile.dev]
-opt-level = 1
+# [profile.dev]
+# opt-level = 1
 
 # Enable high optimizations for dependencies (incl. egui), but not for our code:
-[profile.dev.package."*"]
-opt-level = 3
+# [profile.dev.package."*"]
+# opt-level = 3

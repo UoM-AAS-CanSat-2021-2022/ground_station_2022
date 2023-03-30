@@ -8,6 +8,7 @@ use action::Action;
 use chrono::Timelike;
 use eframe::emath::Align;
 use egui::{DragValue, Layout, Ui, WidgetText};
+use egui_notify::Toasts;
 use sim_mode::SimMode;
 use state::Target;
 use std::fmt::Display;
@@ -122,7 +123,7 @@ impl CommandPanel {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui) -> Option<String> {
+    pub fn show(&mut self, ui: &mut Ui, notif: &mut Toasts) -> Option<String> {
         Self::combobox_row(ui, &mut self.curr_command, "Command:", "command_combobox");
 
         match self.curr_command {
@@ -141,7 +142,9 @@ impl CommandPanel {
             ui.label(self.build_cmd());
             ui.separator();
             if ui.button("Send").clicked() {
-                return Some(self.build_cmd());
+                let cmd = self.build_cmd();
+                notif.info(format!("Sent: {cmd}"));
+                return Some(cmd);
             }
             None
         })
