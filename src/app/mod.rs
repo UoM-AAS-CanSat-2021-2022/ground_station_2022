@@ -23,6 +23,7 @@ use egui::{
     Color32, FontFamily, FontId, Grid, Layout, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
+use egui_notify::Toasts;
 use enum_iterator::{all, Sequence};
 use parking_lot::FairMutex;
 use serialport::{SerialPort, SerialPortType};
@@ -133,6 +134,9 @@ pub struct GroundStationGui {
 
     /// The received packets from the radio
     packet_log: Vec<Packet>,
+
+    /// The container for holding notifications
+    notifications: Toasts,
 }
 
 impl GroundStationGui {
@@ -178,6 +182,7 @@ impl Default for GroundStationGui {
             radio_last_sent: Instant::now(),
             packet_rx: None,
             packet_log: vec![],
+            notifications: Toasts::new(),
         }
     }
 }
@@ -363,11 +368,16 @@ impl GroundStationGui {
                     .spawn(move || Self::radio_thread(radio_num, radio, tx))
                 {
                     tracing::error!("Failed to start radio reader thread - {e:?}");
+                    self.notifications.error("failed to start radio thread");
                 }
                 tracing::info!("Successfully opened port.");
+                self.notifications
+                    .info(format!("Successfully opened {}", &self.radio_port));
             }
             Err(e) => {
                 tracing::error!("Failed to open port - {e:?}");
+                self.notifications
+                    .error(format!("failed to open port: {e:?}"));
             }
         }
     }
@@ -555,6 +565,7 @@ impl GroundStationGui {
         // read any waiting commands into the command history, marking then unsent
         while let Ok(cmd) = self.cmd_receiver.try_recv() {
             tracing::debug!("Received command from channel - cmd={cmd:?}");
+            self.notifications.info(format!("Sent command - {cmd}"));
             self.command_history
                 .insert(Utc::now(), (cmd, CommandStatus::Unsent));
         }
@@ -944,6 +955,9 @@ impl GroundStationGui {
                                     if ui.button("Resend").clicked() {
                                         if let Err(e) = self.cmd_sender.send(cmd.clone()) {
                                             tracing::warn!("Failed to resend cmd={cmd:?} - {e:?}");
+                                            self.notifications.warning("failed to resend command");
+                                        } else {
+                                            self.notifications.info("resent command");
                                         }
                                     }
                                 });
@@ -1022,6 +1036,7 @@ impl GroundStationGui {
                 }
             } else if ui.button("Disconnect").clicked() {
                 self.close_radio();
+                self.notifications.info("Disconnected radio.");
             }
         });
 
@@ -1046,6 +1061,9 @@ impl GroundStationGui {
                     if let Some(path) = rfd::FileDialog::new().pick_file() {
                         if let Err(e) = self.load_sim_file(path) {
                             tracing::warn!("Failed to load sim file - {e:?}");
+                            self.notifications.warning("failed to load the sim file");
+                        } else {
+                            self.notifications.info("loaded sim file");
                         }
                     }
                 }
@@ -1074,10 +1092,12 @@ impl GroundStationGui {
                         if SEND_THREAD_PAUSED.load(ORDER) {
                             if ui.button("play").clicked() {
                                 tracing::info!("Playing simulation mode playback");
+                                self.notifications.info("started simulation mode playback");
                                 SEND_THREAD_PAUSED.store(false, ORDER);
                             }
                         } else if ui.button("pause").clicked() {
                             tracing::info!("Pausing simulation mode playback");
+                            self.notifications.info("pausing simulation mode playback");
                             SEND_THREAD_PAUSED.store(true, ORDER);
                         }
                     });
@@ -1086,6 +1106,8 @@ impl GroundStationGui {
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
                         if ui.button("cancel").clicked() {
                             tracing::info!("Cancelling simulation mode sender thread");
+                            self.notifications
+                                .info("cancelling simulation mode playback");
                             SEND_THREAD_CANCEL.store(true, ORDER);
                         }
                     });
@@ -1101,6 +1123,7 @@ impl GroundStationGui {
                     // set the thread as started
                     SEND_THREAD_STARTED.store(true, ORDER);
                     tracing::info!("Starting simulation mode sender thread");
+                    self.notifications.info("started simulation mode");
 
                     // make a copy of the simp data to send to the thread
                     let Some(simp_data) = self.simp_values.clone() else {
@@ -1116,6 +1139,8 @@ impl GroundStationGui {
 
                     if let Err(e) = thread_res {
                         tracing::error!("Failed to start SIMP command sender thread - {e:?}");
+                        self.notifications
+                            .error("failed to start thread to send commands");
                     }
                 }
             }
@@ -1234,7 +1259,6 @@ impl GroundStationGui {
     }
 }
 
-// TODO: Add egui-notify to show a little notification when certain actions are performed
 // TODO: Add a 3d graph showing the GPS position data in real time
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1243,6 +1267,9 @@ impl eframe::App for GroundStationGui {
 
         // handle any command we have left to send
         self.handle_commands();
+
+        // show any notifications
+        self.notifications.show(ctx);
 
         egui::TopBottomPanel::top("title_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
