@@ -1234,6 +1234,7 @@ impl GroundStationGui {
     }
 }
 
+// TODO: Add egui-notify to show a little notification when certain actions are performed
 // TODO: Add a 3d graph showing the GPS position data in real time
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
