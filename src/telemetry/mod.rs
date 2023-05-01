@@ -22,7 +22,7 @@ use std::fmt;
 #[derive(Display, FromStr, Clone, Debug, PartialEq)]
 #[display(
     "{team_id},{mission_time},{packet_count},{mode},{state},{altitude:.1},{hs_deployed},{pc_deployed},\
-    {mast_raised},{temperature:.1},{voltage:.1},{gps_time},{gps_altitude:.1},\
+    {mast_raised},{temperature:.1},{voltage:.1},{pressure:.1},{gps_time},{gps_altitude:.1},\
     {gps_latitude:.4},{gps_longitude:.4},{gps_sats},{tilt_x:.2},{tilt_y:.2},{cmd_echo}"
 )]
 pub struct Telemetry {
@@ -58,6 +58,9 @@ pub struct Telemetry {
 
     /// VOLTAGE: the voltage of the cansat power bus, with a resolution of 0.1 V
     pub voltage: f64,
+
+    /// PRESSURE: the air pressure of the sensor used, with a resolution of 0.1kPa
+    pub pressure: f64,
 
     /// GPS_TIME: time from the GPS receiver, must be reported in UTC and have a resolution of a second
     pub gps_time: GpsTime,
@@ -104,6 +107,7 @@ impl Telemetry {
             TelemetryField::MastRaised   => format!("{}", self.mast_raised),
             TelemetryField::Temperature  => format!("{}", self.temperature),
             TelemetryField::Voltage      => format!("{}", self.voltage),
+            TelemetryField::Pressure     => format!("{}", self.pressure),
             TelemetryField::GpsTime      => format!("{}", self.gps_time),
             TelemetryField::GpsAltitude  => format!("{}", self.gps_altitude),
             TelemetryField::GpsLatitude  => format!("{}", self.gps_latitude),
@@ -129,6 +133,7 @@ pub enum TelemetryField {
     MastRaised,
     Temperature,
     Voltage,
+    Pressure,
     GpsTime,
     GpsAltitude,
     GpsLatitude,
@@ -154,6 +159,7 @@ impl AsStr for TelemetryField {
             TelemetryField::MastRaised   => "MAST_RAISED",
             TelemetryField::Temperature  => "TEMPERATURE",
             TelemetryField::Voltage      => "VOLTAGE",
+            TelemetryField::Pressure     => "PRESSURE",
             TelemetryField::GpsTime      => "GPS_TIME",
             TelemetryField::GpsAltitude  => "GPS_ALTITUDE",
             TelemetryField::GpsLatitude  => "GPS_LATITUDE",
@@ -178,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_parse() {
-        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
+        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,101.325,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
         let telem = s.parse::<Telemetry>();
         assert_eq!(
             telem,
@@ -199,6 +205,7 @@ mod tests {
                 mast_raised: MastRaised::NotRaised,
                 temperature: 37.8,
                 voltage: 5.1,
+                pressure: 101.325,
                 gps_time: GpsTime { h: 15, m: 12, s: 3 },
                 gps_altitude: 1623.3,
                 gps_latitude: 37.2249,

@@ -29,6 +29,7 @@ fn main() -> anyhow::Result<()> {
     let mode_dist = Slice::new(&modes)?;
     let temp_dist = Uniform::new(12.0, 70.0);
     let volt_dist = Uniform::new(4.8, 5.6);
+    let press_dist = Uniform::new(80.0, 101.325);
     let lat_dist = Uniform::new(37.0, 37.4);
     let long_dist = Uniform::new(-90.0, 80.0);
     let sat_dist = Uniform::new(8, 35);
@@ -81,6 +82,7 @@ fn main() -> anyhow::Result<()> {
             mast_raised: MastRaised::Raised,
             temperature: rng.sample(temp_dist),
             voltage: rng.sample(volt_dist),
+            pressure: rng.sample(press_dist),
             gps_time: GpsTime {
                 h: now.hour() as u8,
                 m: now.minute() as u8,

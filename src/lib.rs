@@ -1,4 +1,4 @@
-#![feature(io_error_other)]
+#![feature(io_error_other, never_type)]
 
 pub mod app;
 pub mod as_str;

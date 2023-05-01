@@ -17,7 +17,7 @@ use eframe::{egui, emath::Align};
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
     text::LayoutJob,
-    Color32, FontFamily, FontId, Grid, Layout, Sense, Ui, Vec2,
+    Color32, FontFamily, FontId, Grid, Layout, ScrollArea, Sense, Ui, Vec2,
 };
 use egui_extras::{Column, TableBuilder};
 use egui_notify::Toasts;
@@ -76,6 +76,9 @@ pub struct GroundStationGui {
 
     /// Do we show all the points in the all graphg view?
     all_graphs_show_all: bool,
+
+    /// Do we show a scrollbar in the all graphs view?
+    all_graphs_show_scrollbar: bool,
 
     /// What does the one graph view show?
     one_graph_shows: Graphable,
@@ -165,6 +168,7 @@ impl Default for GroundStationGui {
             all_graphs_points: 40,
             one_graph_shows_all: false,
             all_graphs_show_all: false,
+            all_graphs_show_scrollbar: false,
             one_graph_shows: Default::default(),
             main_view: Default::default(),
             show_settings_window: false,
@@ -755,6 +759,9 @@ impl GroundStationGui {
             ui.label("Show all: ");
             ui.add(egui::Checkbox::new(&mut self.all_graphs_show_all, ""));
 
+            ui.label("Enable Scrollbar: ");
+            ui.add(egui::Checkbox::new(&mut self.all_graphs_show_scrollbar, ""));
+
             // show the missed packets
             self.missed_packets_widget(ui);
         });
@@ -764,25 +771,31 @@ impl GroundStationGui {
         } else {
             self.all_graphs_points
         };
-        let width = ui.available_width() / 5.0;
-        let height = ui.available_height() / 2.0;
+        let width = ui.available_width() / 4.05;
+        let height = if self.all_graphs_show_scrollbar {
+            width
+        } else {
+            ui.available_height() / 3.06
+        };
 
-        Grid::new("all_graphs")
-            .min_col_width(width)
-            .max_col_width(width)
-            .min_row_height(height)
-            .spacing([5.0, 5.0])
-            .show(ui, |ui| {
-                for (i, field) in all::<Graphable>().enumerate() {
-                    ui.vertical_centered(|ui| {
-                        ui.heading(field.as_str());
-                        self.graph(ui, field.as_str(), field, to_show);
-                    });
-                    if i == 4 || i == 9 {
-                        ui.end_row();
+        ScrollArea::vertical().show(ui, |ui| {
+            Grid::new("all_graphs")
+                .min_col_width(width)
+                .max_col_width(width)
+                .min_row_height(height)
+                .spacing([5.0, 5.0])
+                .show(ui, |ui| {
+                    for (i, field) in all::<Graphable>().enumerate() {
+                        ui.vertical_centered(|ui| {
+                            ui.heading(field.as_str());
+                            self.graph(ui, field.as_str(), field, to_show);
+                        });
+                        if i == 3 || i == 7 {
+                            ui.end_row();
+                        }
                     }
-                }
-            });
+                });
+        });
     }
 
     fn data_table_view(&self, ui: &mut Ui) {
@@ -1305,6 +1318,7 @@ impl GroundStationGui {
 }
 
 // TODO: Add a 3d graph showing the GPS position data in real time
+// TODO: Add smoothing to the graph?
 impl eframe::App for GroundStationGui {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // attempt to receive any telemetry thats availble from the radio

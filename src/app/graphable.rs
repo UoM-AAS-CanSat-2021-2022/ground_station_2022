@@ -19,6 +19,9 @@ pub enum Graphable {
     /// VOLTAGE telemetry field
     Voltage,
 
+    /// PRESSURE telemetry field
+    Pressure,
+
     /// GPS_ALTITUDE telemetry field
     GpsAltitude,
 
@@ -46,6 +49,7 @@ impl AsStr for Graphable {
             Graphable::Altitude => "Altitude",
             Graphable::Temperature => "Temperature",
             Graphable::Voltage => "Voltage",
+            Graphable::Pressure => "Pressure",
             Graphable::GpsAltitude => "GPS Altitude",
             Graphable::GpsLatitude => "GPS Latitude",
             Graphable::GpsLongitude => "GPS Longitude",
@@ -60,16 +64,17 @@ impl Graphable {
     #[rustfmt::skip]
     pub fn extract_telemetry_value(&self, telem: &Telemetry) -> f64 {
         match self {
-            Graphable::PacketCount => telem.packet_count as f64,
-            Graphable::Altitude    => telem.altitude,
-            Graphable::Temperature => telem.temperature,
-            Graphable::Voltage     => telem.voltage,
-            Graphable::GpsAltitude => telem.gps_altitude,
-            Graphable::GpsLatitude => telem.gps_latitude,
+            Graphable::PacketCount  => telem.packet_count as f64,
+            Graphable::Altitude     => telem.altitude,
+            Graphable::Temperature  => telem.temperature,
+            Graphable::Voltage      => telem.voltage,
+            Graphable::Pressure     => telem.pressure,
+            Graphable::GpsAltitude  => telem.gps_altitude,
+            Graphable::GpsLatitude  => telem.gps_latitude,
             Graphable::GpsLongitude => telem.gps_longitude,
-            Graphable::GpsSats     => telem.gps_sats as f64,
-            Graphable::TiltX       => telem.tilt_x,
-            Graphable::TiltY       => telem.tilt_y,
+            Graphable::GpsSats      => telem.gps_sats as f64,
+            Graphable::TiltX        => telem.tilt_x,
+            Graphable::TiltY        => telem.tilt_y,
         }
     }
 
@@ -79,6 +84,7 @@ impl Graphable {
             Graphable::Altitude => format!("{value:.1}m"),
             Graphable::Temperature => format!("{value:.1}°C"),
             Graphable::Voltage => format!("{value:.1}V"),
+            Graphable::Pressure => format!("{value:.1}V"),
             Graphable::GpsAltitude => format!("{value:.1}m"),
             Graphable::GpsLatitude => format!("{value:.4}°N"),
             Graphable::GpsLongitude => format!("{value:.4}°W"),
