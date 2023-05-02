@@ -1,9 +1,9 @@
-use anyhow::{ensure, Result};
-use parse_display::{Display, FromStr};
+use anyhow::{anyhow, ensure, Result};
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
-#[derive(Display, FromStr, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[display("{h:02}:{m:02}:{s:02}.{cs:02}")]
-#[from_str(new = Self::new(h, m, s, cs))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// #[display("{h:02}:{m:02}:{s:02}.{cs:02}")]
 pub struct MissionTime {
     pub h: u8,
     pub m: u8,
@@ -12,10 +12,46 @@ pub struct MissionTime {
     pub cs: u8,
 }
 
+impl FromStr for MissionTime {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let (h, s) = s
+            .split_once(":")
+            .ok_or_else(|| anyhow!("Invalid mission time."))?;
+        let (m, s) = s
+            .split_once(":")
+            .ok_or_else(|| anyhow!("Invalid mission time."))?;
+
+        let h = h.parse()?;
+        let m = m.parse()?;
+
+        let (s, cs) = if let Some((s, cs)) = s.split_once(".") {
+            (s.parse()?, cs.parse()?)
+        } else {
+            (s.parse()?, u8::MAX)
+        };
+
+        Self::new(h, m, s, cs)
+    }
+}
+
+impl Display for MissionTime {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let MissionTime { h, m, s, cs } = *self;
+
+        if cs < 100 {
+            write!(f, "{h:02}:{m:02}:{s:02}.{cs:02}")
+        } else {
+            write!(f, "{h:02}:{m:02}:{s:02}")
+        }
+    }
+}
+
 impl MissionTime {
     fn new(h: u8, m: u8, s: u8, cs: u8) -> Result<Self> {
         ensure!(
-            h < 24 && m < 60 && s < 60 && cs < 100,
+            h < 24 && m < 60 && s < 60 && (cs < 100 || cs == u8::MAX),
             "Invalid values for mission_time."
         );
 
@@ -50,9 +86,10 @@ mod tests {
     use super::*;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
+    use tracing::warn;
 
     #[test]
-    fn test_misstion_time_fromstr_invalid() {
+    fn test_mission_time_fromstr_invalid() {
         let s = "24:34:56.78";
         let ts = s.parse::<MissionTime>();
         ts.unwrap_err();
@@ -71,7 +108,23 @@ mod tests {
     }
 
     #[test]
-    fn test_misstion_time_display_low_numbers() {
+    fn test_mission_time_fromstr_no_cs() {
+        let s = "14:58:56";
+        let ts = s.parse::<MissionTime>().unwrap();
+        assert_eq!(
+            MissionTime {
+                h: 14,
+                m: 58,
+                s: 56,
+                cs: u8::MAX,
+            },
+            ts
+        );
+        assert_eq!(format!("{ts}"), s);
+    }
+
+    #[test]
+    fn test_mission_time_display_low_numbers() {
         let mt = MissionTime {
             h: 1,
             m: 2,

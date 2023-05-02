@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_telemetry_parse_fmt_identical() {
-        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
+        let s = "1047,15:12:02.99,123,F,YEETED,356.2,P,C,N,37.8,5.1,101.3,15:12:03,1623.3,37.2249,-80.4249,14,2.36,-5.49,CXON";
         let telem = s.parse::<Telemetry>().unwrap();
         assert_eq!(format!("{}", telem), s.to_string());
     }
