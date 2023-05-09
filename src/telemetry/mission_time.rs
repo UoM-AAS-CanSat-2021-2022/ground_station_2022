@@ -86,7 +86,6 @@ mod tests {
     use super::*;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
-    use tracing::warn;
 
     #[test]
     fn test_mission_time_fromstr_invalid() {

@@ -136,6 +136,9 @@ pub struct GroundStationGui {
     /// The received packets from the radio
     packet_log: Vec<Packet>,
 
+    /// The RSSI of the previous received packet.
+    last_packet_rssi: Option<i8>,
+
     /// The receiver for files picked by the user
     file_receiver: Option<Receiver<PathBuf>>,
 
@@ -187,6 +190,7 @@ impl Default for GroundStationGui {
             radio_last_sent: Instant::now(),
             packet_rx: None,
             packet_log: vec![],
+            last_packet_rssi: None,
             file_receiver: None,
             notifications: Toasts::new(),
         }
@@ -231,11 +235,26 @@ impl GroundStationGui {
                 match rx.try_recv() {
                     Ok(packet) => {
                         self.packet_log.push(Packet::Received(packet.clone()));
-                        if let ReceivedPacket::Telemetry { telem, .. } = &packet {
-                            self.add_telem(telem.clone());
-                        } else if let ReceivedPacket::Status { tx_status, .. } = &packet {
-                            self.recv_ack(*tx_status);
-                        } else {
+                        let mut attempt_recovery = false;
+                        match &packet {
+                            ReceivedPacket::Telemetry { telem, frame, .. } => {
+                                self.add_telem(telem.clone());
+                                self.last_packet_rssi = Some(frame.rssi);
+                            }
+                            ReceivedPacket::Status { tx_status, .. } => {
+                                self.recv_ack(*tx_status);
+                            }
+                            ReceivedPacket::Received { frame, .. } => {
+                                self.last_packet_rssi = Some(frame.rssi);
+                                attempt_recovery = true;
+                            }
+                            _ => {
+                                attempt_recovery = true;
+                            }
+                        };
+
+                        // attempt to recover telemetry from the raw bytes
+                        if attempt_recovery {
                             for telem in Self::recover_telemetry(&packet) {
                                 tracing::info!(
                                     "Recovered some telemetry from an invalid packet - {telem}"
@@ -1314,6 +1333,11 @@ impl GroundStationGui {
         let (rect, resp) = ui.allocate_at_least(area, Sense::hover());
         ui.painter().circle_filled(rect.center(), r, color);
         resp.on_hover_text_at_pointer(hover_text);
+        if let Some(rssi) = self.last_packet_rssi {
+            ui.label(format!("RSSI: {rssi} dBm"));
+        } else {
+            ui.label("RSSI: N/A");
+        }
     }
 }
 

@@ -7,7 +7,7 @@ use std::io::Cursor;
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RxPacket {
     pub src_addr: u16,
-    pub rssi: u8,
+    pub rssi: i8,
     pub options: u8,
     pub data: Vec<u8>,
 }
@@ -29,7 +29,7 @@ impl TryFrom<XbeePacket> for RxPacket {
 
         let mut cur = Cursor::new(data.as_slice());
         let src_addr = cur.read_u16::<BigEndian>()?;
-        let rssi = cur.read_u8()?;
+        let rssi = cur.read_i8()?;
         let options = cur.read_u8()?;
         let pos = cur.position() as usize;
         let inner_data = data[pos..data.len()].to_vec();
