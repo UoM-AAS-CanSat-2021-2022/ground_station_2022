@@ -84,7 +84,7 @@ impl Graphable {
             Graphable::Altitude => format!("{value:.1}m"),
             Graphable::Temperature => format!("{value:.1}°C"),
             Graphable::Voltage => format!("{value:.1}V"),
-            Graphable::Pressure => format!("{value:.1}V"),
+            Graphable::Pressure => format!("{value:.1}kPa"),
             Graphable::GpsAltitude => format!("{value:.1}m"),
             Graphable::GpsLatitude => format!("{value:.4}°N"),
             Graphable::GpsLongitude => format!("{value:.4}°W"),
