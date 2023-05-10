@@ -139,6 +139,8 @@ pub struct GroundStationGui {
     /// The RSSI of the previous received packet.
     last_packet_rssi: Option<i8>,
 
+    last_telem_world_pos: Option,
+
     /// The receiver for files picked by the user
     file_receiver: Option<Receiver<PathBuf>>,
 
