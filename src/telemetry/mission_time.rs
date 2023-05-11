@@ -17,16 +17,16 @@ impl FromStr for MissionTime {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let (h, s) = s
-            .split_once(":")
+            .split_once(':')
             .ok_or_else(|| anyhow!("Invalid mission time."))?;
         let (m, s) = s
-            .split_once(":")
+            .split_once(':')
             .ok_or_else(|| anyhow!("Invalid mission time."))?;
 
         let h = h.parse()?;
         let m = m.parse()?;
 
-        let (s, cs) = if let Some((s, cs)) = s.split_once(".") {
+        let (s, cs) = if let Some((s, cs)) = s.split_once('.') {
             (s.parse()?, cs.parse()?)
         } else {
             (s.parse()?, u8::MAX)

@@ -5,11 +5,11 @@ use rand::{
     prelude::*,
 };
 use std::io::ErrorKind;
+use std::ops::AddAssign;
 use std::{
     io::{self, Write},
     net::TcpStream,
-    thread,
-    time::Duration,
+    thread, time,
 };
 use tracing::Level;
 
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let volt_dist = Uniform::new(4.8, 5.6);
     let press_dist = Uniform::new(80.0, 101.325);
     let lat_dist = Uniform::new(37.0, 37.4);
-    let long_dist = Uniform::new(-90.0, 80.0);
+    let long_dist = Uniform::new(-80.6, -80.2);
     let sat_dist = Uniform::new(8, 35);
     let tilt_dist = Uniform::new(-45.0, 45.0);
     let delay_dist = Uniform::new(0.5, 1.5);
@@ -55,14 +55,20 @@ fn main() -> anyhow::Result<()> {
             Ok(s) => break s,
             Err(e) => {
                 tracing::warn!("Failed to connect to frontend on {address} - {e}");
-                thread::sleep(Duration::from_millis(200));
+                thread::sleep(time::Duration::from_millis(200));
             }
         }
     };
 
+    let real_time = false;
+    let max_packet_count = 1000;
+
     // send packets until we are disconnected
+    let mut now = Utc::now();
     loop {
-        let now = Utc::now();
+        // seperate the time from Utc::now() so that we can run the clock fast
+        let delay = rng.sample(delay_dist);
+        now.add_assign(chrono::Duration::milliseconds((delay * 1000.0) as i64));
         let altitude = rng.sample(alt_dist);
         let telem = Telemetry {
             team_id: TEAM_ID,
@@ -99,7 +105,7 @@ fn main() -> anyhow::Result<()> {
 
         // artificially fail some packets
         let fail_packet: f64 = rng.sample(Open01);
-        if fail_packet < ARTIFICIAL_FAILURE_RATE {
+        if max_packet_count != 0 && fail_packet < ARTIFICIAL_FAILURE_RATE {
             tracing::info!("Artificially failed a packet: {telem}");
         } else if let Err(e) = writeln!(stream, "{telem}") {
             if matches!(e.kind(), ErrorKind::BrokenPipe | ErrorKind::ConnectionReset) {
@@ -114,6 +120,10 @@ fn main() -> anyhow::Result<()> {
         packet_count += 1;
 
         // wait to send the next packet
-        thread::sleep(Duration::from_secs_f32(rng.sample(delay_dist)));
+        if real_time {
+            thread::sleep(time::Duration::from_secs_f32(delay));
+        } else if max_packet_count <= packet_count {
+            break Ok(());
+        }
     }
 }

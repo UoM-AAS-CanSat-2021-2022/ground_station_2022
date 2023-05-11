@@ -5,6 +5,7 @@ pub use received_packet::ReceivedPacket;
 
 use graphable::Graphable;
 
+use crate::geodesic::WorldPosition;
 use crate::{
     app::commands::CommandPanel,
     as_str::AsStr,
@@ -17,7 +18,7 @@ use eframe::{egui, emath::Align};
 use egui::{
     plot::{Line, Plot, PlotPoint, PlotPoints},
     text::LayoutJob,
-    Color32, FontFamily, FontId, Grid, Layout, ScrollArea, Sense, Ui, Vec2,
+    Color32, DragValue, FontFamily, FontId, Grid, Layout, ScrollArea, Sense, Ui, Vec2, Widget,
 };
 use egui_extras::{Column, TableBuilder};
 use egui_notify::Toasts;
@@ -96,6 +97,9 @@ pub struct GroundStationGui {
     /// Show the radio window?
     show_radio_window: bool,
 
+    /// Show the GPS window?
+    show_gps_window: bool,
+
     /// Show the simulation window?
     show_sim_window: bool,
 
@@ -139,7 +143,11 @@ pub struct GroundStationGui {
     /// The RSSI of the previous received packet.
     last_packet_rssi: Option<i8>,
 
-    last_telem_world_pos: Option,
+    /// The world position of the cansat from the last telemetry
+    last_telem_world_pos: Option<WorldPosition>,
+
+    /// The world position of the ground station
+    ground_station_world_pos: WorldPosition,
 
     /// The receiver for files picked by the user
     file_receiver: Option<Receiver<PathBuf>>,
@@ -179,6 +187,7 @@ impl Default for GroundStationGui {
             show_settings_window: false,
             show_command_window: false,
             show_radio_window: false,
+            show_gps_window: false,
             show_sim_window: false,
             simp_values: None,
             simp_graph_values: None,
@@ -193,6 +202,8 @@ impl Default for GroundStationGui {
             packet_rx: None,
             packet_log: vec![],
             last_packet_rssi: None,
+            last_telem_world_pos: None,
+            ground_station_world_pos: Default::default(),
             file_receiver: None,
             notifications: Toasts::new(),
         }
@@ -318,6 +329,9 @@ impl GroundStationGui {
         if let Err(e) = result {
             tracing::warn!("Encountered error while writing to file: {e}");
         }
+
+        // save the last world position
+        self.last_telem_world_pos = Some(telem.into());
     }
 
     /// Handle an ack for a packet
@@ -824,7 +838,7 @@ impl GroundStationGui {
         const MAIN_FONT_HEIGHT: f32 = 14.0;
         const COL_WIDTH_MULT: f32 = 12.0;
 
-        egui::ScrollArea::horizontal()
+        ScrollArea::horizontal()
             .auto_shrink([false, false])
             .max_height(f32::INFINITY)
             .show(ui, |ui| {
@@ -880,7 +894,7 @@ impl GroundStationGui {
     fn packets_view(&self, ui: &mut Ui) {
         const ROW_HEIGHT: f32 = 20.0;
 
-        egui::ScrollArea::horizontal()
+        ScrollArea::horizontal()
             .auto_shrink([false, false])
             .max_height(f32::INFINITY)
             .show(ui, |ui| {
@@ -907,7 +921,7 @@ impl GroundStationGui {
         const MAIN_FONT_HEIGHT: f32 = 16.0;
         const COL_WIDTH_MULT: f32 = 13.0;
 
-        egui::ScrollArea::horizontal()
+        ScrollArea::horizontal()
             .auto_shrink([false, false])
             .max_height(f32::INFINITY)
             .show(ui, |ui| {
@@ -1083,6 +1097,35 @@ impl GroundStationGui {
                 ui.colored_label(Color32::RED, "Disconnected");
             }
         });
+    }
+
+    fn gps_window(&mut self, ui: &mut Ui) {
+        ui.heading("Ground Station GPS Information");
+        ui.horizontal(|ui| {
+            ui.label("latitude");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                DragValue::new(&mut self.ground_station_world_pos.gps_latitude).ui(ui);
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label("longitude");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                DragValue::new(&mut self.ground_station_world_pos.gps_longitude).ui(ui);
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label("altitude");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                DragValue::new(&mut self.ground_station_world_pos.gps_altitude).ui(ui);
+            });
+        });
+
+        if let Some(cansat_pos) = self.last_telem_world_pos {
+            ui.label(format!(
+                "Approximate Distance to CanSat: {:.2}m",
+                cansat_pos.approx_linear_distance(&self.ground_station_world_pos)
+            ));
+        }
     }
 
     fn recv_sim_file(&mut self) {
@@ -1386,6 +1429,7 @@ impl eframe::App for GroundStationGui {
                         ui.checkbox(&mut self.show_sim_window, "🔁 Simulation");
                         ui.checkbox(&mut self.show_command_window, "🖧 Commands");
                         ui.checkbox(&mut self.show_radio_window, "📻 Radio");
+                        ui.checkbox(&mut self.show_gps_window, "📡 GPS");
                         ui.checkbox(&mut self.show_settings_window, "⚙ Settings");
                         // leftmost
                     });
@@ -1436,6 +1480,14 @@ impl eframe::App for GroundStationGui {
                 .open(&mut open)
                 .show(ctx, |ui| self.radio_window(ui));
             self.show_radio_window = open;
+        }
+
+        if self.show_gps_window {
+            open = true;
+            egui::Window::new("gps")
+                .open(&mut open)
+                .show(ctx, |ui| self.gps_window(ui));
+            self.show_gps_window = open;
         }
 
         if self.show_sim_window {
