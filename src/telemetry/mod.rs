@@ -224,4 +224,45 @@ mod tests {
         let telem = s.parse::<Telemetry>().unwrap();
         assert_eq!(format!("{}", telem), s.to_string());
     }
+
+    #[test]
+    fn test_fuck_my_life_i_hate_hardware_so_fucking_much() {
+        let s = "1047,00:00:00.00,11946,F,IDLE,20.5,P,C,M,28.8,3.3,101.3,13:23:15,0,69.4201,-3.2635,7,-0.09,-0.01,";
+        let telem = s.parse::<Telemetry>().unwrap();
+
+        assert_eq!(
+            telem,
+            Telemetry {
+                team_id: 1047,
+                mission_time: MissionTime {
+                    h: 00,
+                    m: 00,
+                    s: 00,
+                    cs: 00,
+                },
+                packet_count: 11946,
+                mode: Mode::Flight,
+                state: State::Other(String::from("IDLE")),
+                altitude: 20.5,
+                hs_deployed: HsDeployed::Deployed,
+                pc_deployed: PcDeployed::Deployed,
+                mast_raised: MastRaised::Raised,
+                temperature: 28.8,
+                voltage: 3.3,
+                pressure: 101.3,
+                gps_time: GpsTime {
+                    h: 13,
+                    m: 23,
+                    s: 15
+                },
+                gps_altitude: 0.0,
+                gps_latitude: 69.4201,
+                gps_longitude: -3.2635,
+                gps_sats: 7,
+                tilt_x: -0.09,
+                tilt_y: -0.01,
+                cmd_echo: String::new(),
+            }
+        );
+    }
 }

@@ -93,6 +93,38 @@ impl Graphable {
             Graphable::TiltY => format!("{value:.2}°"),
         }
     }
+
+    pub const fn min_value(&self) -> Option<f64> {
+        match self {
+            Graphable::PacketCount => None,
+            Graphable::Altitude => Some(0.0),
+            Graphable::Temperature => Some(0.0),
+            Graphable::Voltage => Some(0.0),
+            Graphable::Pressure => Some(70.0),
+            Graphable::GpsAltitude => Some(0.0),
+            Graphable::GpsLatitude => None,
+            Graphable::GpsLongitude => None,
+            Graphable::GpsSats => Some(0.0),
+            Graphable::TiltX => Some(-45.0),
+            Graphable::TiltY => Some(-45.0),
+        }
+    }
+
+    pub const fn max_value(&self) -> Option<f64> {
+        match self {
+            Graphable::PacketCount => None,
+            Graphable::Altitude => Some(800.0),
+            Graphable::Temperature => Some(70.0),
+            Graphable::Voltage => Some(6.0),
+            Graphable::Pressure => Some(110.0),
+            Graphable::GpsAltitude => Some(2000.0),
+            Graphable::GpsLatitude => None,
+            Graphable::GpsLongitude => None,
+            Graphable::GpsSats => Some(30.0),
+            Graphable::TiltX => Some(45.0),
+            Graphable::TiltY => Some(45.0),
+        }
+    }
 }
 
 impl fmt::Display for Graphable {

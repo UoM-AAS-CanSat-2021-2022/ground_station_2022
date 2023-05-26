@@ -128,6 +128,9 @@ pub struct GroundStationGui {
     /// The radio's baud rate
     radio_baud: u32,
 
+    /// The address to send packets to, 0xFFFF for broadcast
+    dst_addr: u16,
+
     /// The XBee radio serial port connection
     radio: Option<Arc<FairMutex<Box<dyn SerialPort>>>>,
 
@@ -197,6 +200,7 @@ impl Default for GroundStationGui {
             command_history: Default::default(),
             radio_port: "".to_string(),
             radio_baud: 230400,
+            dst_addr: BROADCAST_ADDR,
             radio: None,
             radio_last_sent: Instant::now(),
             packet_rx: None,
@@ -394,7 +398,9 @@ impl GroundStationGui {
 
         // try to open the new radio
         match serialport::new(&self.radio_port, self.radio_baud).open() {
-            Ok(port) => {
+            Ok(mut port) => {
+                // we don't really care if this fails
+                port.set_timeout(Duration::from_secs(2)).ok();
                 let radio_num = CURR_RADIO.fetch_add(1, ORDER) + 1;
                 let radio = Arc::new(FairMutex::new(port));
                 let (tx, rx) = channel();
@@ -626,6 +632,7 @@ impl GroundStationGui {
             while frame_id == 0 {
                 frame_id = FRAME_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
             }
+            // ADDMEHERE
             let req = TxRequest::new(frame_id, BROADCAST_ADDR, cmd);
             let Ok(packet): io::Result<XbeePacket> = req.clone().try_into() else {
                 tracing::error!("Failed to build a packet for cmd={cmd:?}");
@@ -725,8 +732,16 @@ impl GroundStationGui {
             .skip(to_skip)
             .copied()
             .collect();
+        let (min_val, max_val) = points.iter().fold(
+            (field.min_value(), field.max_value()),
+            |(cmin, cmax), point| {
+                let new_min = cmin.map_or(point.y, |y| y.min(point.y));
+                let new_max = cmax.map_or(point.y, |y| y.max(point.y));
+                (Some(new_min), Some(new_max))
+            },
+        );
         let line = Line::new(PlotPoints::Owned(points)).name(field.as_str());
-        Plot::new(id_source)
+        let mut plot = Plot::new(id_source)
             .x_axis_formatter(|x, _range| {
                 let mt = MissionTime::from_seconds(x);
                 format!("{:02}:{:02}:{:02}", mt.h, mt.m, mt.s)
@@ -744,8 +759,17 @@ impl GroundStationGui {
             .allow_drag(false)
             .allow_scroll(false)
             .allow_zoom(false)
-            .allow_boxed_zoom(false)
-            .show(ui, |plot_ui| plot_ui.line(line));
+            .allow_boxed_zoom(false);
+
+        if let Some(max_y) = max_val {
+            plot = plot.include_y(max_y);
+        }
+
+        if let Some(min_y) = min_val {
+            plot = plot.include_y(min_y);
+        }
+
+        plot.show(ui, |plot_ui| plot_ui.line(line));
     }
 
     fn one_graph_view(&mut self, ui: &mut Ui) {
@@ -1073,6 +1097,28 @@ impl GroundStationGui {
                                 }
                             }
                         });
+                });
+            });
+        });
+
+        let width = 100.0;
+        let height = 18.0;
+        ui.horizontal(|ui| {
+            ui.label("Dst Addr: ");
+            ui.vertical_centered(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.allocate_ui(Vec2::new(width, height), |ui| {
+                        ui.with_layout(
+                            Layout::right_to_left(Align::Center)
+                                .with_cross_justify(true)
+                                .with_main_justify(true),
+                            |ui| {
+                                DragValue::new(&mut self.dst_addr)
+                                    .hexadecimal(4, true, true)
+                                    .ui(ui);
+                            },
+                        );
+                    });
                 });
             });
         });

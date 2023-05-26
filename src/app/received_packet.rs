@@ -94,6 +94,7 @@ impl From<&[u8]> for ReceivedPacket {
         };
 
         // parse the string as telemetry
+        tracing::debug!("string_data={string_data:?}");
         match string_data.parse() {
             Ok(telem) => Self::Telemetry {
                 packet: xbp,
