@@ -360,6 +360,9 @@ impl GroundStationGui {
 
     /// Sometimes invalid packets contain data that we can actually salvage
     fn recover_telemetry(packet: &ReceivedPacket) -> Vec<Telemetry> {
+        // a sorted alphabet of valid characters
+        const ALPHABET: &[u8] =
+            b",.0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         let ReceivedPacket::Invalid(data) = packet else {
             return vec![];
         };
@@ -367,7 +370,7 @@ impl GroundStationGui {
         // extract all the ASCII substrings of this data
         let mut ascii_substrings = vec![String::new()];
         for byte in data {
-            if byte.is_ascii() {
+            if ALPHABET.binary_search(byte).is_ok() {
                 // if we hit ascii data just add it to the last string
                 ascii_substrings.last_mut().unwrap().push(*byte as char);
             } else {

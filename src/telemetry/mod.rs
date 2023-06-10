@@ -74,8 +74,8 @@ pub struct Telemetry {
     /// GPS_LONGITUDE: longitude from the GPS receiver, in decimal degrees with a resolution of 0.0001 degrees West
     pub gps_longitude: f64,
 
-    /// GPS_SATS: the number of GPS satellites being tracked by the GPS receiver, must be an integer lol
-    pub gps_sats: u8,
+    /// GPS_SATS: the number of GPS satellites being tracked by the GPS receiver
+    pub gps_sats: i8,
 
     /// TILT_X: angle of the CanSat X axes in degrees, with a resolution of 0.01 degrees.
     /// 0 degrees is defined as when the axes are perpendicular to the Z axes,
@@ -226,8 +226,8 @@ mod tests {
     }
 
     #[test]
-    fn test_fuck_my_life_i_hate_hardware_so_fucking_much() {
-        let s = "1047,00:00:00.00,11946,F,IDLE,20.5,P,C,M,28.8,3.3,101.3,13:23:15,0,69.4201,-3.2635,7,-0.09,-0.01,";
+    fn test_negative_sats() {
+        let s = "1047,00:00:00.00,11946,F,IDLE,20.5,P,C,M,28.8,3.3,101.3,13:23:15,0,69.4201,-3.2635,-1,-0.09,-0.01,";
         let telem = s.parse::<Telemetry>().unwrap();
 
         assert_eq!(
@@ -258,7 +258,7 @@ mod tests {
                 gps_altitude: 0.0,
                 gps_latitude: 69.4201,
                 gps_longitude: -3.2635,
-                gps_sats: 7,
+                gps_sats: -1,
                 tilt_x: -0.09,
                 tilt_y: -0.01,
                 cmd_echo: String::new(),

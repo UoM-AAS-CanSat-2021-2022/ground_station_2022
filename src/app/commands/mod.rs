@@ -1,5 +1,8 @@
 mod action;
 mod enabled;
+mod hold_release;
+mod open_close;
+mod raise_stop;
 mod sim_mode;
 mod state;
 mod time;
@@ -14,6 +17,10 @@ use state::Target;
 use std::fmt::Display;
 use time::Time;
 
+use crate::app::commands::hold_release::HoldRelease;
+use crate::app::commands::open_close::OpenClose;
+use crate::app::commands::raise_stop::RaiseStop;
+use crate::constants::SEALEVEL_PA;
 use crate::{
     app::commands::{
         enabled::Enabled,
@@ -37,6 +44,13 @@ pub struct CommandPanel {
     setstate_target: Target,
     container_state: ContainerState,
     payload_state: PayloadState,
+    cam_enable: Enabled,
+    sound_enable: Enabled,
+    flaps: OpenClose,
+    heat_shield: OpenClose,
+    parachute: OpenClose,
+    flag: RaiseStop,
+    probe: HoldRelease,
     custom_cmd: String,
 }
 
@@ -45,7 +59,7 @@ impl Default for CommandPanel {
         let utc = chrono::Utc::now();
         Self {
             curr_command: Default::default(),
-            telem_enable: Enabled::On,
+            telem_enable: Default::default(),
             time: Default::default(),
             // default to the current UTC time
             manual_time: GpsTime {
@@ -54,12 +68,18 @@ impl Default for CommandPanel {
                 s: utc.second() as u8,
             },
             sim_state: Default::default(),
-            // sea level pressure in pascals
-            sim_pressure: 101325,
+            sim_pressure: SEALEVEL_PA,
             action: Default::default(),
             setstate_target: Default::default(),
             container_state: Default::default(),
             payload_state: Default::default(),
+            cam_enable: Default::default(),
+            sound_enable: Default::default(),
+            flaps: Default::default(),
+            heat_shield: Default::default(),
+            parachute: Default::default(),
+            probe: Default::default(),
+            flag: Default::default(),
             // simplest full command, should be nicer to edit from
             custom_cmd: format!("CMD,{TEAM_ID},CAL"),
         }
@@ -80,6 +100,7 @@ impl CommandPanel {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 egui::ComboBox::from_id_source(id_source)
                     .selected_text(state.as_str())
+                    .width(150.0)
                     .show_ui(ui, |ui| {
                         for c in all() {
                             ui.selectable_value(state, c, c.as_str());
@@ -108,6 +129,7 @@ impl CommandPanel {
             Command::SimulationMode => format!("CMD,{TEAM_ID},SIM,{}", self.sim_state),
             Command::SimulatedPressure => format!("CMD,{TEAM_ID},SIMP,{}", self.sim_pressure),
             Command::Calibrate => format!("CMD,{TEAM_ID},CAL"),
+            Command::Reset => format!("CMD,{TEAM_ID},OPTIONAL,RESET"),
             Command::Action => format!("CMD,{TEAM_ID},OPTIONAL,ACTION,{}", self.action),
             Command::SetState => match self.setstate_target {
                 Target::Payload => format!(
@@ -119,6 +141,13 @@ impl CommandPanel {
                     self.setstate_target, self.container_state
                 ),
             },
+            Command::SoundEnable => format!("CMD,{TEAM_ID},OPTIONAL,SOUND.{}", self.telem_enable),
+            Command::CamEnable => format!("CMD,{TEAM_ID},OPTIONAL,CAM.{}", self.telem_enable),
+            Command::Flaps => format!("CMD,{TEAM_ID},OPTIONAL,FLAP.{}", self.flaps),
+            Command::HeatShield => format!("CMD,{TEAM_ID},OPTIONAL,HS.{}", self.heat_shield),
+            Command::Parachute => format!("CMD,{TEAM_ID},OPTIONAL,CHUTE.{}", self.parachute),
+            Command::Probe => format!("CMD,{TEAM_ID},OPTIONAL,PROBE.{}", self.probe),
+            Command::Flag => format!("CMD,{TEAM_ID},OPTIONAL,FLAG.{}", self.flag),
             Command::Custom => self.custom_cmd.clone(),
         }
     }
@@ -131,9 +160,16 @@ impl CommandPanel {
             Command::SetTime => self.set_time_view(ui),
             Command::SimulationMode => self.simulation_mode_view(ui),
             Command::SimulatedPressure => self.simulation_pressure_view(ui),
-            Command::Calibrate => (),
+            Command::Calibrate | Command::Reset => (),
             Command::Action => self.action_view(ui),
             Command::SetState => self.setstate_view(ui),
+            Command::CamEnable => self.cam_enable_view(ui),
+            Command::SoundEnable => self.sound_enable_view(ui),
+            Command::Flaps => self.flaps_view(ui),
+            Command::HeatShield => self.heat_shield_view(ui),
+            Command::Parachute => self.parachute_view(ui),
+            Command::Flag => self.flag_view(ui),
+            Command::Probe => self.probe_view(ui),
             Command::Custom => self.custom_view(ui),
         };
 
@@ -153,6 +189,34 @@ impl CommandPanel {
 
     fn telemetry_enable_view(&mut self, ui: &mut Ui) {
         Self::combobox_row(ui, &mut self.telem_enable, "Enable:", "cx_combobox");
+    }
+
+    fn sound_enable_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.sound_enable, "Enable:", "cx_combobox");
+    }
+
+    fn cam_enable_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.cam_enable, "Enable:", "cx_combobox");
+    }
+
+    fn flaps_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.flaps, "Open:", "cx_combobox");
+    }
+
+    fn heat_shield_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.heat_shield, "Open:", "cx_combobox");
+    }
+
+    fn parachute_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.parachute, "Open:", "cx_combobox");
+    }
+
+    fn flag_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.flag, "Raise:", "cx_combobox");
+    }
+
+    fn probe_view(&mut self, ui: &mut Ui) {
+        Self::combobox_row(ui, &mut self.probe, "Detatch:", "cx_combobox");
     }
 
     fn set_time_view(&mut self, ui: &mut Ui) {
@@ -252,6 +316,30 @@ enum Command {
     /// SETSTATE - forcibly change the payload/container FSM state
     SetState,
 
+    /// RESET
+    Reset,
+
+    /// CAM.ON/OFF
+    CamEnable,
+
+    /// SOUND.ON/OFF
+    SoundEnable,
+
+    /// FLAP.OPEN/CLOSE
+    Flaps,
+
+    /// HS.OPEN/CLOSE
+    HeatShield,
+
+    /// CHUTE.OPEN/CLOSE
+    Parachute,
+
+    /// FLAG.RAISE/STOP
+    Flag,
+
+    /// PROBE.HOLD/RELEASE
+    Probe,
+
     // Custom - allow the user to send anything to the CanSat
     Custom,
 }
@@ -266,6 +354,14 @@ impl AsStr for Command {
             Command::Calibrate => "Calibrate",
             Command::Action => "Action",
             Command::SetState => "Set State",
+            Command::Reset => "Reset",
+            Command::CamEnable => "Camera",
+            Command::SoundEnable => "Buzzer",
+            Command::Flaps => "Container Door",
+            Command::HeatShield => "Heat Shield",
+            Command::Parachute => "Parachute",
+            Command::Probe => "Payload Release",
+            Command::Flag => "Flag",
             Command::Custom => "Custom",
         }
     }

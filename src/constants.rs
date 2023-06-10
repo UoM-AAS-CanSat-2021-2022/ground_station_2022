@@ -4,6 +4,7 @@ pub const TEAM_ID_STR: &str = "1047";
 
 /// Sea level pressure in HPA
 pub const SEALEVEL_HPA: f64 = 1013.25;
+pub const SEALEVEL_PA: u32 = 101325;
 
 /// The address of the container
 pub const CONTAINER_ADDR: u16 = 0x00_01;
