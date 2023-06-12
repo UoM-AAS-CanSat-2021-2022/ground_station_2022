@@ -141,8 +141,8 @@ impl CommandPanel {
                     self.setstate_target, self.container_state
                 ),
             },
-            Command::SoundEnable => format!("CMD,{TEAM_ID},OPTIONAL,SOUND.{}", self.telem_enable),
-            Command::CamEnable => format!("CMD,{TEAM_ID},OPTIONAL,CAM.{}", self.telem_enable),
+            Command::SoundEnable => format!("CMD,{TEAM_ID},OPTIONAL,SOUND.{}", self.sound_enable),
+            Command::CamEnable => format!("CMD,{TEAM_ID},OPTIONAL,CAM.{}", self.cam_enable),
             Command::Flaps => format!("CMD,{TEAM_ID},OPTIONAL,FLAP.{}", self.flaps),
             Command::HeatShield => format!("CMD,{TEAM_ID},OPTIONAL,HS.{}", self.heat_shield),
             Command::Parachute => format!("CMD,{TEAM_ID},OPTIONAL,CHUTE.{}", self.parachute),
