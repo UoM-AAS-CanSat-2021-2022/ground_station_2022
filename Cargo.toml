@@ -1,6 +1,6 @@
 [package]
 name = "ground_station"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 default-run = "ground_station"
 
